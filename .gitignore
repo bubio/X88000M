@@ -1,0 +1,5 @@
+*.o
+X88000
+X88000.ini
+Debug.log
+.DS_Store

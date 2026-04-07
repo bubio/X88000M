@@ -1,6 +1,7 @@
 # macro
 
 APP	=	X88000
+UNAME_S	=	$(shell uname -s)
 
 CC	=	g++
 CFLAGS	=	`pkg-config gtk+-2.0 --cflags` -O2
@@ -62,7 +63,11 @@ OBJS	=	DiskImage.o \
 		Z80Adapter.o \
 		Z80Data.o \
 		Z80_2.o
-LIBS	=	`pkg-config gtk+-2.0 --libs` -lX11
+LIBS	=	`pkg-config gtk+-2.0 --libs`
+
+ifneq ($(UNAME_S),Darwin)
+LIBS	+=	-lX11
+endif
 
 # dir
 

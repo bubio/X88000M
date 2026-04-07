@@ -80,8 +80,10 @@
 
 #define X88_PLATFORM_UNIX
 #define X88_GUI_GTK
+#ifndef __APPLE__
 #define X88_GUI_GTK_USEXWINDOW
 #define X88_GUI_GTK_USEKEYMAP
+#endif // !__APPLE__
 #define X88_GUI_GTK_USEIM
 #define X88_ENCODE_GTK
 #define X88_ENCODING_SOURCE_UTF8
