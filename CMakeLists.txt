@@ -24,10 +24,51 @@ find_package(PkgConfig REQUIRED)
 
 file(GLOB X88000_SOURCES CONFIGURE_DEPENDS
 	"${X88000_SRC_DIR}/*.cpp")
+set(X88000_CORE_SOURCES
+	"${X88000_SRC_DIR}/StdHeader.cpp"
+	"${X88000_SRC_DIR}/X88Utility.cpp"
+	"${X88000_SRC_DIR}/DiskImage.cpp"
+	"${X88000_SRC_DIR}/DiskImageCollection.cpp"
+	"${X88000_SRC_DIR}/DiskImageFile.cpp"
+	"${X88000_SRC_DIR}/TapeImage.cpp"
+	"${X88000_SRC_DIR}/ParallelDevice.cpp"
+	"${X88000_SRC_DIR}/ParallelNull.cpp"
+	"${X88000_SRC_DIR}/ParallelPR201.cpp"
+	"${X88000_SRC_DIR}/ParallelPrinter.cpp"
+	"${X88000_SRC_DIR}/PC88.cpp"
+	"${X88000_SRC_DIR}/PC88Calendar.cpp"
+	"${X88000_SRC_DIR}/PC88Crtc.cpp"
+	"${X88000_SRC_DIR}/PC88Fdc.cpp"
+	"${X88000_SRC_DIR}/PC88Opna.cpp"
+	"${X88000_SRC_DIR}/PC88Pcg.cpp"
+	"${X88000_SRC_DIR}/PC88Ppi.cpp"
+	"${X88000_SRC_DIR}/PC88Timer.cpp"
+	"${X88000_SRC_DIR}/PC88Usart.cpp"
+	"${X88000_SRC_DIR}/PC88Z80Main.cpp"
+	"${X88000_SRC_DIR}/PC88Z80Sub.cpp"
+	"${X88000_SRC_DIR}/X88ScreenDrawer.cpp"
+	"${X88000_SRC_DIR}/Z80.cpp"
+	"${X88000_SRC_DIR}/Z80_2.cpp"
+	"${X88000_SRC_DIR}/Z80Adapter.cpp"
+	"${X88000_SRC_DIR}/Z80Data.cpp")
+
+set(X88000M_GTK2_READY OFF)
+if(X88000M_BUILD_LEGACY_GTK OR X88000M_BUILD_SDL3_FRONTEND)
+	pkg_check_modules(GTK2 REQUIRED IMPORTED_TARGET gtk+-2.0)
+	set(X88000M_GTK2_READY ON)
+endif()
+
+if(X88000M_BUILD_SDL3_FRONTEND AND X88000M_GTK2_READY)
+	add_library(x88core STATIC ${X88000_CORE_SOURCES})
+	target_include_directories(x88core PUBLIC "${X88000_SRC_DIR}")
+	target_link_libraries(x88core PUBLIC PkgConfig::GTK2)
+	set_target_properties(x88core PROPERTIES
+		CXX_STANDARD 11
+		CXX_STANDARD_REQUIRED ON
+		CXX_EXTENSIONS OFF)
+endif()
 
 if(X88000M_BUILD_LEGACY_GTK)
-	pkg_check_modules(GTK2 REQUIRED IMPORTED_TARGET gtk+-2.0)
-
 	if(APPLE)
 		add_executable(X88000 MACOSX_BUNDLE ${X88000_SOURCES})
 	else()
@@ -104,6 +145,10 @@ if(X88000M_BUILD_SDL3_FRONTEND)
 
 		add_executable(X88000SDL3 ${X88000_SDL3_SOURCES})
 		target_link_libraries(X88000SDL3 PRIVATE ${X88000M_SDL3_LINK_TARGET})
+		if(TARGET x88core)
+			target_link_libraries(X88000SDL3 PRIVATE x88core)
+			target_compile_definitions(X88000SDL3 PRIVATE X88000_SDL3_HAS_CORE=1)
+		endif()
 		target_include_directories(X88000SDL3 PRIVATE "${X88000_SRC_DIR}")
 		set_target_properties(X88000SDL3 PROPERTIES
 			CXX_STANDARD 11

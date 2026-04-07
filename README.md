@@ -65,7 +65,10 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target X88000SDL3 -j
 ```
 
-現時点では SDL3 の独立プロトタイプで、エミュレーション core はまだ接続していません。
+現時点では SDL3 の独立プロトタイプで、エミュレーション core との接続は最小限です。
+ビルド構成として `x88core`（PC88/Z80/DiskImage などの共有 core ライブラリ）を `X88000SDL3` からリンクし、ROM が見つかった場合に `CPC88::Initialize/Reset/Execute` を SDL3 ループ内で呼ぶブリッジまで実装しています。
+また、SDL3 のキーボード状態から PC-8801 キーマトリクスへ反映する最小入力マッピング（英数字、カーソル、テンキー、ファンクションキー、修飾キー）を実装しています。
+実行ループは現状 60fps 相当の固定フレームペースで動作します。
 
 Dear ImGui は `third_party/imgui/` に source を配置した場合のみ有効化されます。未配置でも SDL3 ターゲットはビルド可能です。
 
@@ -78,6 +81,12 @@ cmake -S . -B build \
 ```
 
 デフォルトは `OFF` です。ローカルに `pkg-config` 経由の `sdl3` と `third_party/imgui` がある場合はそちらを優先します。
+
+SDL3 プロトタイプが参照する ROM ディレクトリは次の順です。
+
+- `X88_ROM_DIR` 環境変数
+- カレントディレクトリ
+- macOS の `~/Library/Application Support/X88000M/`
 
 ## 実行に必要な ROM
 
