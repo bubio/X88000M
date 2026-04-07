@@ -65,12 +65,28 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target X88000SDL3 -j
 ```
 
-現時点では SDL3 の独立プロトタイプで、エミュレーション core との接続は最小限です。
-ビルド構成として `x88core`（PC88/Z80/DiskImage などの共有 core ライブラリ）を `X88000SDL3` からリンクし、ROM が見つかった場合に `CPC88::Initialize/Reset/Execute` を SDL3 ループ内で呼ぶブリッジまで実装しています。
-また、SDL3 のキーボード状態から PC-8801 キーマトリクスへ反映する最小入力マッピング（英数字、カーソル、テンキー、ファンクションキー、修飾キー）を実装しています。
-実行ループは現状 60fps 相当の固定フレームペースで動作します。
+macOS では `build/X88000SDL3.app` が生成されます。
+端末から直接起動する場合は `build/X88000SDL3.app/Contents/MacOS/X88000SDL3` を実行できます。
 
-Dear ImGui は `third_party/imgui/` に source を配置した場合のみ有効化されます。未配置でも SDL3 ターゲットはビルド可能です。
+現時点では SDL3 の独立プロトタイプで、エミュレーション core との接続は最小限です。
+ビルド構成として `x88core`（PC88/Z80/DiskImage/TapeImage などの共有 core ライブラリ）を `X88000SDL3` からリンクし、ROM が見つかった場合に `CPC88::Initialize/Reset/Execute` を SDL3 ループ内で呼ぶブリッジまで実装しています。
+また、SDL3 のキーボード状態から PC-8801 キーマトリクスへ反映する入力マッピング（英数字、カーソル、テンキー、ファンクションキー、修飾キー）を実装しています。
+実行ループは 60fps 相当の固定フレームペースで動作し、表示は 640x400 をウィンドウ内にレターボックス表示します。
+
+現在の通常機能（SDL3 側）:
+
+- ROM 読み込みと実行
+- D88 の挿入/イジェクト
+- T88/CMT の読み込み
+- 起動引数でのメディア指定: `--disk1=...` `--disk2=...` `--tape=...`
+- ファイルのドラッグ&ドロップ読み込み（D88/T88/CMT）
+- 実行中ショートカット:
+  - `Ctrl+R`: リセット
+  - `Ctrl+P`: 一時停止/再開
+  - `Ctrl+1` / `Ctrl+2`: Drive1/Drive2 イジェクト
+  - `Ctrl+Enter`: フルスクリーン切り替え
+
+Dear ImGui は `third_party/imgui/` に source があればそれを使い、無い場合は CMake の `FetchContent` で自動取得します（デフォルト有効）。
 
 `SDL3` / `Dear ImGui` を CMake で自動取得したい場合は、次のオプションを使えます。
 
@@ -80,7 +96,7 @@ cmake -S . -B build \
   -DX88000M_FETCH_IMGUI=ON
 ```
 
-デフォルトは `OFF` です。ローカルに `pkg-config` 経由の `sdl3` と `third_party/imgui` がある場合はそちらを優先します。
+`X88000M_FETCH_SDL3` のデフォルトは `OFF`、`X88000M_FETCH_IMGUI` のデフォルトは `ON` です。ローカルに `pkg-config` 経由の `sdl3` と `third_party/imgui` がある場合はそちらを優先します。
 
 SDL3 プロトタイプが参照する ROM ディレクトリは次の順です。
 

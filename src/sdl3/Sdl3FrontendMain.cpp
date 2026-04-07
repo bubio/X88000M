@@ -5,6 +5,7 @@
 #include "StdHeader.h"
 #include "PC88.h"
 #include "X88ScreenDrawer.h"
+#include "X88DiskImageMemory.h"
 #include "ParallelNull.h"
 
 #include <ctype.h>
@@ -22,6 +23,8 @@
 
 #include <stdio.h>
 #include <string>
+#include <string.h>
+#include <set>
 #include <vector>
 
 #ifdef X88000_SDL3_HAS_CORE
@@ -33,6 +36,9 @@ CPC88 g_pc88;
 CX88ScreenDrawer g_screenDrawer;
 CParallelNull g_parallelNull;
 bool g_bScreenDrawerReady = false;
+std::set<CX88DiskImageMemory> g_setDiskImageMemory;
+std::string g_astrDriveMediaPath[CPC88Fdc::DRIVE_MAX];
+std::string g_strLastMediaStatus;
 
 std::string EnsureTrailingSlash(const std::string& fstrPath)
 {
@@ -106,6 +112,206 @@ void OnCorePcgOutput(int, int)
 	// TODO: feed SDL audio backend.
 }
 
+std::string ToLowerAscii(std::string strText)
+{
+	for (size_t n = 0; n < strText.size(); n++) {
+		char ch = strText[n];
+		if ((ch >= 'A') && (ch <= 'Z')) {
+			strText[n] = (char)(ch-'A'+'a');
+		}
+	}
+	return strText;
+}
+
+std::string GetLowerFileExt(const std::string& fstrPath)
+{
+	std::string::size_type nPos = fstrPath.find_last_of('.');
+	if (nPos == std::string::npos) {
+		return "";
+	}
+	return ToLowerAscii(fstrPath.substr(nPos));
+}
+
+void SetMediaStatus(const std::string& strStatus)
+{
+	g_strLastMediaStatus = strStatus;
+}
+
+int OpenDiskImageFile(
+	const std::string& fstrFileName, bool& bReadOnly,
+	uint8_t*& pbtData, uint32_t& dwSize)
+{
+	CX88DiskImageMemory dim;
+	int nResult = dim.Create(fstrFileName, bReadOnly);
+	if (nResult == CDiskImageFile::ERR_NOERROR) {
+		bReadOnly = dim.IsReadOnly();
+		pbtData = dim.GetData();
+		dwSize = dim.GetSize();
+		g_setDiskImageMemory.insert(dim);
+	}
+	return nResult;
+}
+
+int CloseDiskImageFile(uint8_t* pbtData)
+{
+	std::set<CX88DiskImageMemory>::iterator itInfo =
+		g_setDiskImageMemory.find(CX88DiskImageMemory(pbtData));
+	if (itInfo == g_setDiskImageMemory.end()) {
+		return CDiskImageFile::ERR_ERROR;
+	}
+	int nResult = (*itInfo).Flush();
+	(*itInfo).Destroy();
+	g_setDiskImageMemory.erase(itInfo);
+	return nResult;
+}
+
+bool InsertDiskImageToDrive(const std::string& fstrFileName, int nDrive)
+{
+	if ((nDrive < 0) || (nDrive >= CPC88Fdc::DRIVE_MAX)) {
+		return false;
+	}
+	if (!CPC88::GetDiskImageCollection().AddDiskImageFile(fstrFileName, false)) {
+		return false;
+	}
+	int nDiskCount = CPC88::GetDiskImageCollection().GetDiskImageCount();
+	if (nDiskCount <= 0) {
+		return false;
+	}
+	CPC88::Fdc().SetDiskImage(
+		nDrive,
+		CPC88::GetDiskImageCollection().GetDiskImage(nDiskCount-1));
+	g_astrDriveMediaPath[nDrive] = fstrFileName;
+	return true;
+}
+
+void EjectDiskImageFromDrive(int nDrive)
+{
+	if ((nDrive < 0) || (nDrive >= CPC88Fdc::DRIVE_MAX)) {
+		return;
+	}
+	CPC88::Fdc().SetDiskImage(nDrive, NULL);
+	g_astrDriveMediaPath[nDrive].clear();
+}
+
+bool AddMediaImage(
+	const std::string& fstrFileName,
+	int nDrive,
+	bool bAllowAutoAssignDrive)
+{
+	if (fstrFileName.empty()) {
+		return false;
+	}
+	std::string strExt = GetLowerFileExt(fstrFileName);
+	if (strExt == ".t88") {
+		int nResult = CPC88::Usart().GetLoadTapeImage().Load(fstrFileName);
+		SetMediaStatus((nResult == CTapeImage::ERR_NOERROR)?
+			"Loaded tape image: " + fstrFileName:
+			"Failed to load tape image: " + fstrFileName);
+		return nResult == CTapeImage::ERR_NOERROR;
+	}
+	if (strExt == ".cmt") {
+		int nResult = CPC88::Usart().GetLoadTapeImage().LoadCMT(fstrFileName);
+		SetMediaStatus((nResult == CTapeImage::ERR_NOERROR)?
+			"Loaded CMT image: " + fstrFileName:
+			"Failed to load CMT image: " + fstrFileName);
+		return nResult == CTapeImage::ERR_NOERROR;
+	}
+	if ((nDrive < 0) && bAllowAutoAssignDrive) {
+		nDrive = 0;
+		for (int nDrive2 = 0; nDrive2 < CPC88Fdc::DRIVE_MAX; nDrive2++) {
+			if (!CPC88::Fdc().IsDriveReady(nDrive2)) {
+				nDrive = nDrive2;
+				break;
+			}
+		}
+	}
+	bool bResult = InsertDiskImageToDrive(fstrFileName, nDrive);
+	SetMediaStatus(bResult?
+		("Inserted disk image into drive " + std::to_string(nDrive+1) + ": " + fstrFileName):
+		("Failed to insert disk image: " + fstrFileName));
+	return bResult;
+}
+
+void ParseInitialMediaArgs(int argc, char** argv)
+{
+	for (int nArg = 1; nArg < argc; nArg++) {
+		const char* pszArg = argv[nArg];
+		if ((pszArg == NULL) || (*pszArg == '\0')) {
+			continue;
+		}
+		std::string strArg = pszArg;
+		if (strArg.rfind("--disk1=", 0) == 0) {
+			AddMediaImage(strArg.substr(8), 0, false);
+		} else if (strArg.rfind("--disk2=", 0) == 0) {
+			AddMediaImage(strArg.substr(8), 1, false);
+		} else if (strArg.rfind("--tape=", 0) == 0) {
+			AddMediaImage(strArg.substr(7), -1, false);
+		} else if (strArg[0] != '-') {
+			AddMediaImage(strArg, -1, true);
+		}
+	}
+}
+
+void ResetCoreState()
+{
+	CPC88::Reset();
+	SetMediaStatus("System reset");
+}
+
+void UpdateWindowTitle(SDL_Window* pWindow, bool bCoreReady, bool bPauseEmulation)
+{
+	if (pWindow == NULL) {
+		return;
+	}
+	std::string strTitle = "X88000 SDL3";
+	if (!bCoreReady) {
+		strTitle += " [ROM not found]";
+	} else if (bPauseEmulation) {
+		strTitle += " [Paused]";
+	}
+	if (!g_strLastMediaStatus.empty()) {
+		strTitle += " - ";
+		strTitle += g_strLastMediaStatus;
+	}
+	SDL_SetWindowTitle(pWindow, strTitle.c_str());
+}
+
+void ToggleFullscreen(SDL_Window* pWindow)
+{
+	if (pWindow == NULL) {
+		return;
+	}
+	bool bFullscreen = (SDL_GetWindowFlags(pWindow) & SDL_WINDOW_FULLSCREEN) != 0;
+	if (bFullscreen) {
+		SDL_SetWindowFullscreen(pWindow, false);
+	} else {
+		SDL_SetWindowFullscreen(pWindow, true);
+	}
+}
+
+SDL_FRect CalcLetterboxRect(int nWindowW, int nWindowH, int nSrcW, int nSrcH)
+{
+	SDL_FRect rctDst;
+	rctDst.x = 0.0f;
+	rctDst.y = 0.0f;
+	rctDst.w = (float)nWindowW;
+	rctDst.h = (float)nWindowH;
+	if ((nWindowW <= 0) || (nWindowH <= 0) || (nSrcW <= 0) || (nSrcH <= 0)) {
+		return rctDst;
+	}
+
+	float fScaleX = (float)nWindowW/(float)nSrcW;
+	float fScaleY = (float)nWindowH/(float)nSrcH;
+	float fScale = (fScaleX < fScaleY)? fScaleX: fScaleY;
+	float fW = (float)nSrcW*fScale;
+	float fH = (float)nSrcH*fScale;
+	rctDst.w = fW;
+	rctDst.h = fH;
+	rctDst.x = ((float)nWindowW-fW)*0.5f;
+	rctDst.y = ((float)nWindowH-fH)*0.5f;
+	return rctDst;
+}
+
 bool ProbeRomAvailability()
 {
 	static const char* s_apszProbeRomName[] = {
@@ -141,6 +347,8 @@ bool InitializeCore()
 
 	CPC88::SetOutputDebugLogCallback(OutputCoreDebugLog);
 	CPC88::SetSysFileOpenCallback(OpenSystemFileFromDirs);
+	CDiskImageFile::SetDiskImageFileOpenCallback(OpenDiskImageFile);
+	CDiskImageFile::SetDiskImageFileCloseCallback(CloseDiskImageFile);
 	CPC88::Z80Main().SetIntVectChangeCallback(OnCoreIntVectChanged);
 	CPC88::Z80Main().SetBeepOutputCallback(OnCoreBeepOutput);
 	CPC88::Pcg().SetPcgSoundOutputCallback(OnCorePcgOutput);
@@ -158,6 +366,12 @@ bool InitializeCore()
 
 void ShutdownCore()
 {
+	CDiskImageCollection& dicDisks = CPC88::GetDiskImageCollection();
+	while (dicDisks.size() > 0) {
+		CDiskImageCollection::iterator itFile = dicDisks.begin();
+		dicDisks.erase(itFile);
+	}
+	g_setDiskImageMemory.clear();
 	if (g_bScreenDrawerReady) {
 		g_screenDrawer.Destroy();
 		g_bScreenDrawerReady = false;
@@ -453,14 +667,22 @@ void UpdateKeyMatricsFromSDL()
 
 #endif
 
-int main(int, char**) {
+int main(int argc, char** argv) {
 	bool bCoreReady = false;
+	bool bPauseEmulation = false;
+	bool bShowStatusWindow = false;
 	std::vector<uint32_t> vArgbBuffer;
 	const Uint64 nPerfFreq = SDL_GetPerformanceFrequency();
 	const Uint64 nFrameTicks = (nPerfFreq > 0)? (nPerfFreq / 60U): 0U;
+	char szMediaPath[1024];
+	szMediaPath[0] = '\0';
+	int nSelectedDrive = 0;
 
 #ifdef X88000_SDL3_HAS_CORE
 	bCoreReady = InitializeCore();
+	if (bCoreReady) {
+		ParseInitialMediaArgs(argc, argv);
+	}
 #endif
 
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO)) {
@@ -478,6 +700,7 @@ int main(int, char**) {
 		SDL_Quit();
 		return 1;
 	}
+	UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
 
 	SDL_Renderer* pRenderer = SDL_CreateRenderer(pWindow, NULL);
 	if (pRenderer == NULL) {
@@ -519,18 +742,47 @@ int main(int, char**) {
 #ifdef X88000_SDL3_HAS_IMGUI
 			ImGui_ImplSDL3_ProcessEvent(&evt);
 #endif
-			if (evt.type == SDL_EVENT_QUIT) {
-				bRunning = false;
+				if (evt.type == SDL_EVENT_QUIT) {
+					bRunning = false;
+				}
+				if ((evt.type == SDL_EVENT_KEY_DOWN) &&
+					(evt.key.key == SDLK_ESCAPE))
+				{
+					bRunning = false;
+				}
+#ifdef X88000_SDL3_HAS_CORE
+				if (evt.type == SDL_EVENT_DROP_FILE) {
+					if (evt.drop.data != NULL) {
+						AddMediaImage(evt.drop.data, -1, true);
+						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+						SDL_free(const_cast<char*>(evt.drop.data));
+					}
+				}
+				if ((evt.type == SDL_EVENT_KEY_DOWN) && !evt.key.repeat) {
+					bool bCtrl = (evt.key.mod & SDL_KMOD_CTRL) != 0;
+					if (bCtrl && (evt.key.key == SDLK_RETURN)) {
+						ToggleFullscreen(pWindow);
+					} else if (bCtrl && (evt.key.key == SDLK_R)) {
+						ResetCoreState();
+						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+					} else if (bCtrl && (evt.key.key == SDLK_P)) {
+						bPauseEmulation = !bPauseEmulation;
+						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+					} else if (bCtrl && (evt.key.key == SDLK_1)) {
+						EjectDiskImageFromDrive(0);
+						SetMediaStatus("Ejected drive 1");
+						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+					} else if (bCtrl && (evt.key.key == SDLK_2)) {
+						EjectDiskImageFromDrive(1);
+						SetMediaStatus("Ejected drive 2");
+						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+					}
+				}
+#endif
 			}
-			if ((evt.type == SDL_EVENT_KEY_DOWN) &&
-				(evt.key.key == SDLK_ESCAPE))
-			{
-				bRunning = false;
-			}
-		}
 
 #ifdef X88000_SDL3_HAS_CORE
-		if (bCoreReady) {
+		if (bCoreReady && !bPauseEmulation) {
 			UpdateKeyMatricsFromSDL();
 			CPC88::Execute(4000000/60);
 			UpdateCoreFrame();
@@ -542,19 +794,99 @@ int main(int, char**) {
 		ImGui_ImplSDLRenderer3_NewFrame();
 		ImGui_ImplSDL3_NewFrame();
 		ImGui::NewFrame();
-		ImGui::Begin("Status");
-		ImGui::TextUnformatted("SDL3 + ImGui frontend bootstrap");
-		ImGui::Text("Core: %s", bCoreReady? "initialized": "ROM not found");
-		ImGui::End();
-		ImGui::Render();
+			if (ImGui::BeginMainMenuBar()) {
+				if (ImGui::BeginMenu("System")) {
+#ifdef X88000_SDL3_HAS_CORE
+					if (ImGui::MenuItem("Reset", NULL, false, bCoreReady)) {
+						ResetCoreState();
+						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+					}
+					if (ImGui::MenuItem("Pause", NULL, bPauseEmulation, bCoreReady)) {
+						bPauseEmulation = !bPauseEmulation;
+						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+					}
+#endif
+					if (ImGui::MenuItem("Quit")) {
+						bRunning = false;
+				}
+					ImGui::EndMenu();
+				}
+				if (ImGui::BeginMenu("Media")) {
+#ifdef X88000_SDL3_HAS_CORE
+					if (ImGui::MenuItem("Eject Disk Drive 1", NULL, false, bCoreReady)) {
+						EjectDiskImageFromDrive(0);
+						SetMediaStatus("Ejected drive 1");
+						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+					}
+					if (ImGui::MenuItem("Eject Disk Drive 2", NULL, false, bCoreReady)) {
+						EjectDiskImageFromDrive(1);
+						SetMediaStatus("Ejected drive 2");
+						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+					}
+#endif
+					ImGui::EndMenu();
+				}
+				if (ImGui::BeginMenu("View")) {
+					if (ImGui::MenuItem("Status Panel", NULL, bShowStatusWindow)) {
+						bShowStatusWindow = !bShowStatusWindow;
+					}
+					ImGui::EndMenu();
+				}
+				ImGui::EndMainMenuBar();
+			}
+			if (bShowStatusWindow) {
+				if (ImGui::Begin("Status", &bShowStatusWindow)) {
+					ImGui::TextUnformatted("SDL3 + ImGui frontend");
+					ImGui::Text("Core: %s", bCoreReady? "initialized": "ROM not found");
+#ifdef X88000_SDL3_HAS_CORE
+					ImGui::Text("Execution: %s", bPauseEmulation? "paused": "running");
+					ImGui::Text("Drive1: %s",
+						CPC88::Fdc().IsDriveReady(0)?
+							g_astrDriveMediaPath[0].c_str():
+							"(empty)");
+					ImGui::Text("Drive2: %s",
+						CPC88::Fdc().IsDriveReady(1)?
+							g_astrDriveMediaPath[1].c_str():
+							"(empty)");
+					ImGui::InputText("Media Path", szMediaPath, sizeof(szMediaPath));
+					ImGui::RadioButton("Drive 1", &nSelectedDrive, 0);
+					ImGui::SameLine();
+					ImGui::RadioButton("Drive 2", &nSelectedDrive, 1);
+					if (ImGui::Button("Insert Disk/Tape")) {
+						if (AddMediaImage(szMediaPath, nSelectedDrive, true)) {
+							szMediaPath[0] = '\0';
+						}
+						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("Eject Selected Drive")) {
+						EjectDiskImageFromDrive(nSelectedDrive);
+						SetMediaStatus("Ejected drive " + std::to_string(nSelectedDrive+1));
+						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+					}
+					if (!g_strLastMediaStatus.empty()) {
+						ImGui::TextWrapped("%s", g_strLastMediaStatus.c_str());
+					}
+					ImGui::Separator();
+					ImGui::TextUnformatted("Shortcuts: Ctrl+R Reset, Ctrl+P Pause, Ctrl+1/2 Eject, Ctrl+Enter Fullscreen");
+					ImGui::TextUnformatted("Drag & drop D88/T88/CMT into the window to load.");
+#endif
+				}
+				ImGui::End();
+			}
+			ImGui::Render();
 #endif
 
 		SDL_SetRenderDrawColor(pRenderer, 18, 24, 30, 255);
 		SDL_RenderClear(pRenderer);
 
-		if (bCoreReady) {
-			SDL_RenderTexture(pRenderer, pFrameTexture, NULL, NULL);
-		}
+			if (bCoreReady) {
+				int nWindowW = 0;
+				int nWindowH = 0;
+				SDL_GetRenderOutputSize(pRenderer, &nWindowW, &nWindowH);
+				SDL_FRect rctDst = CalcLetterboxRect(nWindowW, nWindowH, 640, 400);
+				SDL_RenderTexture(pRenderer, pFrameTexture, NULL, &rctDst);
+			}
 
 #ifdef X88000_SDL3_HAS_IMGUI
 		ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), pRenderer);

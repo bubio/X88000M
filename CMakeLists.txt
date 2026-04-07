@@ -12,7 +12,7 @@ set(X88000_IMGUI_DIR "${X88000_THIRD_PARTY_DIR}/imgui")
 option(X88000M_BUILD_LEGACY_GTK "Build legacy GTK frontend" ON)
 option(X88000M_BUILD_SDL3_FRONTEND "Build SDL3 frontend prototype" ON)
 option(X88000M_FETCH_SDL3 "Fetch SDL3 from upstream when pkg-config is unavailable" OFF)
-option(X88000M_FETCH_IMGUI "Fetch Dear ImGui from upstream when third_party/imgui is unavailable" OFF)
+option(X88000M_FETCH_IMGUI "Fetch Dear ImGui from upstream when third_party/imgui is unavailable" ON)
 set(X88000M_SDL3_GIT_TAG "release-3.4.2" CACHE STRING "SDL3 git tag used by FetchContent")
 set(X88000M_IMGUI_GIT_TAG "v1.92.6" CACHE STRING "Dear ImGui git tag used by FetchContent")
 
@@ -30,6 +30,7 @@ set(X88000_CORE_SOURCES
 	"${X88000_SRC_DIR}/DiskImage.cpp"
 	"${X88000_SRC_DIR}/DiskImageCollection.cpp"
 	"${X88000_SRC_DIR}/DiskImageFile.cpp"
+	"${X88000_SRC_DIR}/X88DiskImageMemory.cpp"
 	"${X88000_SRC_DIR}/TapeImage.cpp"
 	"${X88000_SRC_DIR}/ParallelDevice.cpp"
 	"${X88000_SRC_DIR}/ParallelNull.cpp"
@@ -139,21 +140,39 @@ if(X88000M_BUILD_SDL3_FRONTEND)
 		message(WARNING "SDL3 frontend disabled: pkg-config module 'sdl3' not found. Set X88000M_FETCH_SDL3=ON to fetch from source.")
 	endif()
 
-	if(X88000M_SDL3_AVAILABLE)
-		set(X88000_SDL3_SOURCES
-			"${X88000_SRC_DIR}/sdl3/Sdl3FrontendMain.cpp")
+		if(X88000M_SDL3_AVAILABLE)
+			set(X88000_SDL3_SOURCES
+				"${X88000_SRC_DIR}/sdl3/Sdl3FrontendMain.cpp")
 
-		add_executable(X88000SDL3 ${X88000_SDL3_SOURCES})
-		target_link_libraries(X88000SDL3 PRIVATE ${X88000M_SDL3_LINK_TARGET})
-		if(TARGET x88core)
-			target_link_libraries(X88000SDL3 PRIVATE x88core)
-			target_compile_definitions(X88000SDL3 PRIVATE X88000_SDL3_HAS_CORE=1)
-		endif()
-		target_include_directories(X88000SDL3 PRIVATE "${X88000_SRC_DIR}")
-		set_target_properties(X88000SDL3 PROPERTIES
-			CXX_STANDARD 11
-			CXX_STANDARD_REQUIRED ON
-			CXX_EXTENSIONS OFF)
+			if(APPLE)
+				add_executable(X88000SDL3 MACOSX_BUNDLE ${X88000_SDL3_SOURCES})
+			else()
+				add_executable(X88000SDL3 ${X88000_SDL3_SOURCES})
+			endif()
+			target_link_libraries(X88000SDL3 PRIVATE ${X88000M_SDL3_LINK_TARGET})
+			if(TARGET x88core)
+				target_link_libraries(X88000SDL3 PRIVATE x88core)
+				target_compile_definitions(X88000SDL3 PRIVATE X88000_SDL3_HAS_CORE=1)
+			endif()
+			target_include_directories(X88000SDL3 PRIVATE "${X88000_SRC_DIR}")
+			set_target_properties(X88000SDL3 PROPERTIES
+				CXX_STANDARD 11
+				CXX_STANDARD_REQUIRED ON
+				CXX_EXTENSIONS OFF)
+			if(APPLE)
+				set_source_files_properties(${X88000_BUNDLE_RESOURCES} PROPERTIES
+					MACOSX_PACKAGE_LOCATION Resources)
+				target_sources(X88000SDL3 PRIVATE ${X88000_BUNDLE_RESOURCES})
+				set_target_properties(X88000SDL3 PROPERTIES
+					MACOSX_BUNDLE_INFO_PLIST
+						"${X88000_CMAKE_DIR}/Info.plist.in"
+					MACOSX_BUNDLE_BUNDLE_NAME "X88000M SDL3"
+					MACOSX_BUNDLE_BUNDLE_VERSION "0.1.0"
+					MACOSX_BUNDLE_COPYRIGHT "Original X88000 by Manuke; repository maintenance by bubio"
+					MACOSX_BUNDLE_GUI_IDENTIFIER "com.github.bubio.x88000m.sdl3"
+					MACOSX_BUNDLE_LONG_VERSION_STRING "X88000M SDL3 0.1.0"
+					MACOSX_BUNDLE_SHORT_VERSION_STRING "0.1.0")
+			endif()
 
 		set(X88000M_IMGUI_SOURCE_DIR "")
 		if(EXISTS "${X88000_IMGUI_DIR}/imgui.h")
