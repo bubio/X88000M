@@ -56,6 +56,29 @@ macOS では `build/X88000.app` が生成されます。端末から直接起動
 
 upstream 由来の [`src/Makefile`](./src/Makefile) は参考用として残していますが、このリポジトリでは CMake を正規のビルド入口としています。
 
+## SDL3 frontend (WIP)
+
+`SDL3 + ImGui` 移行に向けて、`X88000SDL3` ターゲットを追加しています。
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target X88000SDL3 -j
+```
+
+現時点では SDL3 の独立プロトタイプで、エミュレーション core はまだ接続していません。
+
+Dear ImGui は `third_party/imgui/` に source を配置した場合のみ有効化されます。未配置でも SDL3 ターゲットはビルド可能です。
+
+`SDL3` / `Dear ImGui` を CMake で自動取得したい場合は、次のオプションを使えます。
+
+```sh
+cmake -S . -B build \
+  -DX88000M_FETCH_SDL3=ON \
+  -DX88000M_FETCH_IMGUI=ON
+```
+
+デフォルトは `OFF` です。ローカルに `pkg-config` 経由の `sdl3` と `third_party/imgui` がある場合はそちらを優先します。
+
 ## 実行に必要な ROM
 
 ROM イメージは同梱していません。
