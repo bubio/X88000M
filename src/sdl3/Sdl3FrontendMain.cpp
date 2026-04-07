@@ -22,6 +22,7 @@
 #endif
 
 #include "Sdl3Settings.h"
+#include "Sdl3AudioOutput.h"
 
 #include <stdio.h>
 #include <string>
@@ -39,6 +40,7 @@ std::vector<std::string> g_vRomSearchDir;
 CPC88 g_pc88;
 CX88ScreenDrawer g_screenDrawer;
 CParallelNull g_parallelNull;
+CSdl3AudioOutput g_audio;
 bool g_bScreenDrawerReady = false;
 std::set<CX88DiskImageMemory> g_setDiskImageMemory;
 std::string g_astrDriveMediaPath[CPC88Fdc::DRIVE_MAX];
@@ -368,24 +370,28 @@ bool DrawEnvSettingsWindow(bool& bShow, SEnvSettingsView& view, CSdl3Settings& s
 			ImGui::TextDisabled("(frame rate / interlace will be wired up in a later phase)");
 		}
 
-		if (ImGui::CollapsingHeader("Sound")) {
+		if (ImGui::CollapsingHeader("Sound", ImGuiTreeNodeFlags_DefaultOpen)) {
 			if (ImGui::SliderInt("Beep volume", &view.nBeepVolume, 0, 100)) {
 				char szBuf[16];
 				snprintf(szBuf, sizeof(szBuf), "%d", view.nBeepVolume);
 				settings.SetSectionString(SECTION_OPTION, "beepvolume", szBuf);
+				g_audio.SetBeepVolume(view.nBeepVolume);
 			}
 			if (ImGui::Checkbox("Beep mute", &view.bBeepMute)) {
 				settings.SetSectionString(SECTION_OPTION, "beepmute", BoolToOnOff(view.bBeepMute));
+				g_audio.SetBeepMute(view.bBeepMute);
 			}
 			if (ImGui::SliderInt("PCG volume", &view.nPcgVolume, 0, 100)) {
 				char szBuf[16];
 				snprintf(szBuf, sizeof(szBuf), "%d", view.nPcgVolume);
 				settings.SetSectionString(SECTION_OPTION, "pcgvolume", szBuf);
+				g_audio.SetPcgVolume(view.nPcgVolume);
 			}
 			if (ImGui::Checkbox("PCG mute", &view.bPcgMute)) {
 				settings.SetSectionString(SECTION_OPTION, "pcgmute", BoolToOnOff(view.bPcgMute));
+				g_audio.SetPcgMute(view.bPcgMute);
 			}
-			ImGui::TextDisabled("(audio output is enabled in Phase B)");
+			ImGui::TextDisabled("(YM2203/OPN output will be added in Phase C)");
 		}
 	}
 	ImGui::End();
@@ -633,14 +639,14 @@ void OnCoreIntVectChanged()
 	// TODO: route interrupt-vector changes to frontend debugger indicators.
 }
 
-void OnCoreBeepOutput(bool, bool)
+void OnCoreBeepOutput(bool bBeepPort, bool bExBeepPort)
 {
-	// TODO: feed SDL audio backend.
+	g_audio.SetBeepEnabled(bBeepPort, bExBeepPort);
 }
 
-void OnCorePcgOutput(int, int)
+void OnCorePcgOutput(int nChannel, int nCounter)
 {
-	// TODO: feed SDL audio backend.
+	g_audio.SetPcgChannel(nChannel, nCounter);
 }
 
 std::string ToLowerAscii(std::string strText)
@@ -1410,6 +1416,16 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
+#ifdef X88000_SDL3_HAS_CORE
+	if (g_audio.Initialize()) {
+		// Apply persisted volume / mute settings.
+		g_audio.SetBeepVolume(atoi(settings.GetSectionString(SECTION_OPTION, "beepvolume", "50").c_str()));
+		g_audio.SetPcgVolume (atoi(settings.GetSectionString(SECTION_OPTION, "pcgvolume",  "50").c_str()));
+		g_audio.SetBeepMute  (ParseBoolEntry(settings.GetSectionString(SECTION_OPTION, "beepmute", "off"), false));
+		g_audio.SetPcgMute   (ParseBoolEntry(settings.GetSectionString(SECTION_OPTION, "pcgmute",  "off"), false));
+	}
+#endif
+
 	int nInitialWindowW = settings.GetInt("window.width", 1024);
 	int nInitialWindowH = settings.GetInt("window.height", 768);
 	if (nInitialWindowW < 320) { nInitialWindowW = 320; }
@@ -1809,6 +1825,7 @@ int main(int argc, char** argv) {
 	SDL_DestroyRenderer(pRenderer);
 	SDL_DestroyWindow(pWindow);
 #ifdef X88000_SDL3_HAS_CORE
+	g_audio.Shutdown();
 	ShutdownCore();
 #endif
 	SDL_Quit();

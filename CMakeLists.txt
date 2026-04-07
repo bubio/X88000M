@@ -144,7 +144,8 @@ if(X88000M_BUILD_SDL3_FRONTEND)
 		if(X88000M_SDL3_AVAILABLE)
 			set(X88000_SDL3_SOURCES
 				"${X88000_SRC_DIR}/sdl3/Sdl3FrontendMain.cpp"
-				"${X88000_SRC_DIR}/sdl3/Sdl3Settings.cpp")
+				"${X88000_SRC_DIR}/sdl3/Sdl3Settings.cpp"
+				"${X88000_SRC_DIR}/sdl3/Sdl3AudioOutput.cpp")
 
 			if(APPLE)
 				add_executable(X88000SDL3 MACOSX_BUNDLE ${X88000_SDL3_SOURCES})
