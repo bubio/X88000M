@@ -78,9 +78,16 @@ macOS では `build/X88000SDL3.app` が生成されます。
 - ROM 読み込みと実行
 - D88 の挿入/イジェクト
 - T88/CMT の読み込み
+- ファイルダイアログからのメディア読み込み（`Media` メニュー）
+- ディスクイメージ管理ウィンドウ（`Media -> Disk Manager...`）— D88 内の複数イメージをツリー表示し、各ディスクを Drive 1〜4 に割り当て可能
+- テープイメージ管理ウィンドウ（`Media -> Tape Manager...`）— ロード/Erase/FWD/REW 操作と進行状況表示
+- 環境設定ウィンドウ（`System -> Environment Settings...`）— BASIC モード、CPU クロック、ドライブ数、Wait/Old/PCG 等を設定
+- BASIC モード / クロックのクイックスイッチ（`System -> BASIC Mode` / `Clock`）
 - 起動引数でのメディア指定: `--disk1=...` `--disk2=...` `--tape=...`
-- ファイルのドラッグ&ドロップ読み込み（D88/T88/CMT）
+- ファイルのドラッグ&ドロップ読み込み（D88/T88/CMT、Shift+drop で Drive 2 / Cmd+Ctrl+drop で Drive 1）
+- 設定の永続化: ウィンドウサイズや環境設定をレガシー GTK 版と同じ `~/Library/Application Support/X88000M/X88000.ini` に保存
 - 実行中ショートカット:
+  - `Ctrl+O`: メディアファイルを開く
   - `Ctrl+R`: リセット
   - `Ctrl+P`: 一時停止/再開
   - `Ctrl+1` / `Ctrl+2`: Drive1/Drive2 イジェクト

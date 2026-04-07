@@ -4,6 +4,7 @@ X88000.ini
 Debug.log
 .DS_Store
 build/
+build-*/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake

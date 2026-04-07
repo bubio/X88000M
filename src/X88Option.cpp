@@ -1023,49 +1023,9 @@ void CX88OptionManager::SetDefault(
 }
 
 ////////////////////////////////////////////////////////////
-// implementation of CX88EnvFile
+// implementation of CX88EnvFile (moved to X88EnvFile.cpp)
 
-////////////////////////////////////////////////////////////
-// create & destroy
-
-// default constructor
-
-CX88EnvFile::CX88EnvFile() {
-
-#ifdef X88_PLATFORM_UNIX
-
-	m_bDirty = false;
-
-#endif // X88_PLATFORM_UNIX
-
-}
-
-// standard constructor
-
-CX88EnvFile::CX88EnvFile(const std::string& fstrFileName) {
-
-#ifdef X88_PLATFORM_UNIX
-
-	m_bDirty = false;
-
-#endif // X88_PLATFORM_UNIX
-
-	Open(fstrFileName);
-}
-
-// destructor
-
-CX88EnvFile::~CX88EnvFile() {
-	if (!m_fstrFileName.empty()) {
-		Close();
-	}
-}
-
-////////////////////////////////////////////////////////////
-// operation
-
-// open environment file
-
+#if 0
 bool CX88EnvFile::Open(const std::string& fstrFileName) {
 	bool bResult = true;
 	if (!m_fstrFileName.empty()) {
@@ -1331,3 +1291,4 @@ bool CX88EnvFile::SetEntry(
 
 	return bResult;
 }
+#endif // 0 — original CX88EnvFile impl is now in X88EnvFile.cpp

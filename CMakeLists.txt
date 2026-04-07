@@ -27,6 +27,7 @@ file(GLOB X88000_SOURCES CONFIGURE_DEPENDS
 set(X88000_CORE_SOURCES
 	"${X88000_SRC_DIR}/StdHeader.cpp"
 	"${X88000_SRC_DIR}/X88Utility.cpp"
+	"${X88000_SRC_DIR}/X88EnvFile.cpp"
 	"${X88000_SRC_DIR}/DiskImage.cpp"
 	"${X88000_SRC_DIR}/DiskImageCollection.cpp"
 	"${X88000_SRC_DIR}/DiskImageFile.cpp"
@@ -142,7 +143,8 @@ if(X88000M_BUILD_SDL3_FRONTEND)
 
 		if(X88000M_SDL3_AVAILABLE)
 			set(X88000_SDL3_SOURCES
-				"${X88000_SRC_DIR}/sdl3/Sdl3FrontendMain.cpp")
+				"${X88000_SRC_DIR}/sdl3/Sdl3FrontendMain.cpp"
+				"${X88000_SRC_DIR}/sdl3/Sdl3Settings.cpp")
 
 			if(APPLE)
 				add_executable(X88000SDL3 MACOSX_BUNDLE ${X88000_SDL3_SOURCES})
