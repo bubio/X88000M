@@ -1,0 +1,23 @@
+X88000 Licensing Notice
+======================
+
+This repository preserves the licensing notice included in the original
+X88000 source package. The following Japanese text is the upstream notice
+from `src/X88000Src.txt`.
+
+当X88000ソースはPDS（パブリック・ドメイン・ソフトウェア）です。
+ソースコードの一部または全部を利用する場合、制作者（Manuke）
+に許諾を取る必要はありませんし、利用した旨をマニュアル等に記
+述することも要求しません。
+（もちろん、ご一報くだされば嬉しく思います）
+ただし、このソースコードを運用することによって生じたいかなる
+損害もManukeは関知いたしません。
+あらかじめご承知置きください。
+
+Notes
+-----
+
+- The original distribution did not include a standard SPDX/OSI license text
+  such as MIT, BSD, GPL, CC0-1.0, or The Unlicense.
+- This repository preserves the upstream notice as-is and does not claim to
+  relicense the code under another standard license.

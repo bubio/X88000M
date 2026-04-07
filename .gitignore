@@ -3,3 +3,10 @@ X88000
 X88000.ini
 Debug.log
 .DS_Store
+build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+Testing/
