@@ -19,6 +19,157 @@
 
 using namespace NX88Utility;
 
+namespace {
+
+FILE* OpenReadOnlyFileInDir(
+	const std::string& fstrDir, const std::string& fstrName)
+{
+	std::string fstrPath = fstrDir;
+	fstrPath += fstrName;
+	return fopen(fstrPath.c_str(), "rb");
+}
+
+#ifdef X88_GUI_GTK
+
+void TryParseGtkRcFile(const std::string& fstrPath)
+{
+	FILE* fpt = fopen(fstrPath.c_str(), "rb");
+	if (fpt != NULL) {
+		fclose(fpt);
+		gtk_rc_parse(fstrPath.c_str());
+	}
+}
+
+#ifdef __APPLE__
+
+void ConfigureGtkMenuBarForMac()
+{
+	GtkSettings* pSettings = gtk_settings_get_default();
+	if (pSettings == NULL) {
+		return;
+	}
+	GObjectClass* pClass = G_OBJECT_GET_CLASS(pSettings);
+	if (pClass == NULL) {
+		return;
+	}
+	if (g_object_class_find_property(pClass, "gtk-shell-shows-menubar") != NULL) {
+		g_object_set(
+			G_OBJECT(pSettings),
+			"gtk-shell-shows-menubar", FALSE,
+			NULL);
+	}
+	if (g_object_class_find_property(pClass, "gtk-shell-shows-app-menu") != NULL) {
+		g_object_set(
+			G_OBJECT(pSettings),
+			"gtk-shell-shows-app-menu", FALSE,
+			NULL);
+	}
+}
+
+#endif // __APPLE__
+
+#endif // X88_GUI_GTK
+
+} // namespace
+
+#ifdef X88_PLATFORM_UNIX
+
+#include <errno.h>
+#include <sys/stat.h>
+
+namespace {
+
+std::string EnsureTrailingSlash(const std::string& fstrPath) {
+	if (fstrPath.empty() || (fstrPath[fstrPath.length()-1] == '/')) {
+		return fstrPath;
+	}
+	return fstrPath + '/';
+}
+
+bool DirectoryExists(const std::string& fstrPath) {
+	struct stat st;
+	return (stat(fstrPath.c_str(), &st) == 0) && S_ISDIR(st.st_mode);
+}
+
+bool EnsureDirectory(const std::string& fstrPath) {
+	if (DirectoryExists(fstrPath)) {
+		return true;
+	}
+	if (mkdir(fstrPath.c_str(), 0755) == 0) {
+		return true;
+	}
+	return (errno == EEXIST) && DirectoryExists(fstrPath);
+}
+
+bool EnsureDirectoryTree(const std::string& fstrPath) {
+	if (fstrPath.empty()) {
+		return false;
+	}
+
+	std::string fstrWork = fstrPath;
+	if (fstrWork[fstrWork.length()-1] == '/') {
+		fstrWork.erase(fstrWork.length()-1);
+	}
+
+	std::string fstrCurrent;
+	size_t nPos = 0;
+	if (!fstrWork.empty() && (fstrWork[0] == '/')) {
+		fstrCurrent = "/";
+		nPos = 1;
+	}
+	while (nPos <= fstrWork.length()) {
+		size_t nSlash = fstrWork.find('/', nPos);
+		std::string fstrPart = fstrWork.substr(nPos, nSlash-nPos);
+		if (!fstrPart.empty()) {
+			if (!fstrCurrent.empty() &&
+				(fstrCurrent[fstrCurrent.length()-1] != '/'))
+			{
+				fstrCurrent += '/';
+			}
+			fstrCurrent += fstrPart;
+			if (!EnsureDirectory(fstrCurrent)) {
+				return false;
+			}
+		}
+		if (nSlash == std::string::npos) {
+			break;
+		}
+		nPos = nSlash+1;
+	}
+	return true;
+}
+
+#ifdef __APPLE__
+
+std::string GetMacAppSupportDir() {
+	const char* pszHome = getenv("HOME");
+	if ((pszHome == NULL) || (*pszHome == '\0')) {
+		return std::string();
+	}
+	return EnsureTrailingSlash(
+		std::string(pszHome) + "/Library/Application Support/X88000M");
+}
+
+std::string GetMacBundleResourceDir(const std::string& fstrModuleDir) {
+	static const std::string fstrBundleSuffix = "/Contents/MacOS/";
+	if (
+		(fstrModuleDir.length() < fstrBundleSuffix.length()) ||
+		(fstrModuleDir.compare(
+			fstrModuleDir.length()-fstrBundleSuffix.length(),
+			fstrBundleSuffix.length(),
+			fstrBundleSuffix) != 0))
+	{
+		return std::string();
+	}
+	return EnsureTrailingSlash(fstrModuleDir + "../Resources");
+}
+
+#endif // __APPLE__
+
+} // namespace
+
+#endif // X88_PLATFORM_UNIX
+
 ////////////////////////////////////////////////////////////
 // implementation of CX88000
 
@@ -52,6 +203,14 @@ CX88DirectX CX88000::m_DX;
 // module directory(filesystem encoding)
 
 std::string CX88000::m_fstrModuleDir;
+
+// resource directory(filesystem encoding)
+
+std::string CX88000::m_fstrResourceDir;
+
+// state directory(filesystem encoding)
+
+std::string CX88000::m_fstrStateDir;
 
 // start directory(filesystem encoding)
 
@@ -378,7 +537,12 @@ bool CX88000::Initialize() {
 #endif // __CYGWIN__
 
 	gtk_init(&m_argc, &m_argv);
-	gtk_rc_parse("./gtkrc");
+
+#ifdef __APPLE__
+
+	ConfigureGtkMenuBarForMac();
+
+#endif // __APPLE__
 
 	m_pExecTimer = g_timer_new();
 
@@ -452,9 +616,41 @@ bool CX88000::Initialize() {
 
 #endif // X88_PLATFORM
 
-	m_fstrEnvFileName = m_fstrModuleDir;
+	m_fstrResourceDir = m_fstrModuleDir;
+	m_fstrStateDir = m_fstrModuleDir;
+
+#ifdef __APPLE__
+
+	{
+		std::string fstrResourceDir = GetMacBundleResourceDir(m_fstrModuleDir);
+		if (!fstrResourceDir.empty()) {
+			m_fstrResourceDir = fstrResourceDir;
+		}
+		std::string fstrStateDir = GetMacAppSupportDir();
+		if (!fstrStateDir.empty() && EnsureDirectoryTree(fstrStateDir)) {
+			m_fstrStateDir = fstrStateDir;
+		}
+	}
+
+#endif // __APPLE__
+	
+#ifdef X88_GUI_GTK
+
+	TryParseGtkRcFile(m_fstrStartDir + "gtkrc");
+	if (m_fstrResourceDir != m_fstrStartDir) {
+		TryParseGtkRcFile(m_fstrResourceDir + "gtkrc");
+	}
+	if ((m_fstrModuleDir != m_fstrStartDir) &&
+		(m_fstrModuleDir != m_fstrResourceDir))
+	{
+		TryParseGtkRcFile(m_fstrModuleDir + "gtkrc");
+	}
+
+#endif // X88_GUI_GTK
+
+	m_fstrEnvFileName = m_fstrStateDir;
 	m_fstrEnvFileName += "X88000.ini";
-	m_fstrDebugLogFileName = m_fstrModuleDir;
+	m_fstrDebugLogFileName = m_fstrStateDir;
 	m_fstrDebugLogFileName += "Debug.log";
 	m_pc88.Z80Main().SetBeepOutputCallback(BeepOutput);
 	m_pc88.Pcg().SetPcgSoundOutputCallback(PcgSoundOutput);
@@ -709,7 +905,7 @@ void CX88000::WriteRam(
 	FILE* fpt;
 	std::string fstrPath;
 	if (bWriteMainRam0) {
-		fstrPath = m_fstrModuleDir;
+		fstrPath = m_fstrStateDir;
 		fstrPath += "main0.ram";
 		fpt = fopen(fstrPath.c_str(), "wb");
 		if (fpt != NULL) {
@@ -718,7 +914,7 @@ void CX88000::WriteRam(
 		}
 	}
 	if (bWriteMainRam1) {
-		fstrPath = m_fstrModuleDir;
+		fstrPath = m_fstrStateDir;
 		fstrPath += "main1.ram";
 		fpt = fopen(fstrPath.c_str(), "wb");
 		if (fpt != NULL) {
@@ -734,7 +930,7 @@ void CX88000::WriteRam(
 	if (bWriteFastTVRam &&
 		!PC88().Z80Main().IsFastTVRamUse())
 	{
-		fstrPath = m_fstrModuleDir;
+		fstrPath = m_fstrStateDir;
 		fstrPath += "fast_tv.ram";
 		fpt = fopen(fstrPath.c_str(), "wb");
 		if (fpt != NULL) {
@@ -745,7 +941,7 @@ void CX88000::WriteRam(
 	if (bWriteSlowTVRam &&
 		PC88().Z80Main().IsFastTVRamUse())
 	{
-		fstrPath = m_fstrModuleDir;
+		fstrPath = m_fstrStateDir;
 		fstrPath += "slow_tv.ram";
 		fpt = fopen(fstrPath.c_str(), "wb");
 		if (fpt != NULL) {
@@ -754,7 +950,7 @@ void CX88000::WriteRam(
 		}
 	}
 	if (bWriteGVRam0) {
-		fstrPath = m_fstrModuleDir;
+		fstrPath = m_fstrStateDir;
 		fstrPath += "gv0.ram";
 		fpt = fopen(fstrPath.c_str(), "wb");
 		if (fpt != NULL) {
@@ -763,7 +959,7 @@ void CX88000::WriteRam(
 		}
 	}
 	if (bWriteGVRam1) {
-		fstrPath = m_fstrModuleDir;
+		fstrPath = m_fstrStateDir;
 		fstrPath += "gv1.ram";
 		fpt = fopen(fstrPath.c_str(), "wb");
 		if (fpt != NULL) {
@@ -772,7 +968,7 @@ void CX88000::WriteRam(
 		}
 	}
 	if (bWriteGVRam2) {
-		fstrPath = m_fstrModuleDir;
+		fstrPath = m_fstrStateDir;
 		fstrPath += "gv2.ram";
 		fpt = fopen(fstrPath.c_str(), "wb");
 		if (fpt != NULL) {
@@ -783,7 +979,7 @@ void CX88000::WriteRam(
 	if (bWriteSubRam &&
 		!PC88().IsSubSystemDisableNow())
 	{
-		fstrPath = m_fstrModuleDir;
+		fstrPath = m_fstrStateDir;
 		fstrPath += "sub.ram";
 		fpt = fopen(fstrPath.c_str(), "wb");
 		if (fpt != NULL) {
@@ -792,7 +988,7 @@ void CX88000::WriteRam(
 		}
 	}
 	if (bWriteExRam0) {
-		fstrPath = m_fstrModuleDir;
+		fstrPath = m_fstrStateDir;
 		fstrPath += "ex0.ram";
 		fpt = fopen(fstrPath.c_str(), "wb");
 		if (fpt != NULL) {
@@ -801,7 +997,7 @@ void CX88000::WriteRam(
 		}
 	}
 	if (bWriteExRam1) {
-		fstrPath = m_fstrModuleDir;
+		fstrPath = m_fstrStateDir;
 		fstrPath += "ex1.ram";
 		fpt = fopen(fstrPath.c_str(), "wb");
 		if (fpt != NULL) {
@@ -1367,7 +1563,7 @@ gboolean CX88000::IdleCallback(gpointer /*pData*/) {
 // operation
 
 // open system file
-//     (first: current directory, second: module directory)
+//     (start directory, state directory, resource directory, module directory)
 
 FILE* CX88000::SysFileOpen(const std::string& strName) {
 	std::string fstrName = ConvUTF8toFS(strName);
@@ -1390,34 +1586,48 @@ FILE* CX88000::SysFileOpen(const std::string& strName) {
 
 #endif // X88_PLATFORM
 
-	FILE* fpt;
-	std::string fstrPath;
-	fstrPath = m_fstrStartDir;
-	fstrPath += fstrName;
-	fpt = fopen(fstrPath.c_str() , "rb");
+	FILE* fpt = OpenReadOnlyFileInDir(m_fstrStartDir, fstrName);
 
 #ifdef X88_PLATFORM_UNIX
 
-	if (fpt == NULL) {
-		fstrPath = m_fstrStartDir;
-		fstrPath += gstrName2;
-		fpt = fopen(fstrPath.c_str() , "rb");
+	if ((fpt == NULL) && !gstrName2.empty()) {
+		fpt = OpenReadOnlyFileInDir(m_fstrStartDir, gstrName2);
 	}
 
 #endif // X88_PLATFORM
 
 	if (fpt == NULL) {
-		fstrPath = m_fstrModuleDir;
-		fstrPath += fstrName;
-		fpt = fopen(fstrPath.c_str(), "rb");
+		fpt = OpenReadOnlyFileInDir(m_fstrStateDir, fstrName);
 	}
 
 #ifdef X88_PLATFORM_UNIX
 
+	if ((fpt == NULL) && !gstrName2.empty()) {
+		fpt = OpenReadOnlyFileInDir(m_fstrStateDir, gstrName2);
+	}
+
+#endif // X88_PLATFORM
+
 	if (fpt == NULL) {
-		fstrPath = m_fstrModuleDir;
-		fstrPath += gstrName2;
-		fpt = fopen(fstrPath.c_str(), "rb");
+		fpt = OpenReadOnlyFileInDir(m_fstrResourceDir, fstrName);
+	}
+
+#ifdef X88_PLATFORM_UNIX
+
+	if ((fpt == NULL) && !gstrName2.empty()) {
+		fpt = OpenReadOnlyFileInDir(m_fstrResourceDir, gstrName2);
+	}
+
+#endif // X88_PLATFORM
+
+	if (fpt == NULL) {
+		fpt = OpenReadOnlyFileInDir(m_fstrModuleDir, fstrName);
+	}
+
+#ifdef X88_PLATFORM_UNIX
+
+	if ((fpt == NULL) && !gstrName2.empty()) {
+		fpt = OpenReadOnlyFileInDir(m_fstrModuleDir, gstrName2);
 	}
 
 #endif // X88_PLATFORM

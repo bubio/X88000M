@@ -78,6 +78,10 @@ protected:
 
 	// module directory(filesystem encoding)
 	static std::string m_fstrModuleDir;
+	// resource directory(filesystem encoding)
+	static std::string m_fstrResourceDir;
+	// state directory(filesystem encoding)
+	static std::string m_fstrStateDir;
 	// start directory(filesystem encoding)
 	static std::string m_fstrStartDir;
 	// frame window

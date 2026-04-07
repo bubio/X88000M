@@ -49,6 +49,9 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
+macOS では `build/X88000.app` が生成されます。端末から直接起動する場合は、実体の実行ファイル `build/X88000.app/Contents/MacOS/X88000` を使えます。
+この GTK2 ベース実装では、メニューは macOS の上部メニューバーではなくアプリウィンドウ内に表示されます。
+
 環境によって `pkg-config` が `gtk+-2.0` を見つけられない場合は、`PKG_CONFIG_PATH` に Homebrew の `gtk+` の `pkgconfig` ディレクトリを追加してください。
 
 upstream 由来の [`src/Makefile`](./src/Makefile) は参考用として残していますが、このリポジトリでは CMake を正規のビルド入口としています。
@@ -57,7 +60,18 @@ upstream 由来の [`src/Makefile`](./src/Makefile) は参考用として残し�
 
 ROM イメージは同梱していません。
 
-コード上は、システム ROM をまず「現在の作業ディレクトリ」から探し、次に「実行ファイルのあるディレクトリ」から探します。そのため、ROM 一式を置いたディレクトリで `X88000` を起動するか、実行ファイルと同じ場所に ROM を配置してください。
+コード上は、システム ROM を次の順に探します。
+
+- 現在の作業ディレクトリ
+- macOS では `~/Library/Application Support/X88000M/`
+- 実行ファイルに対応する resource ディレクトリ
+- 実行ファイルのあるディレクトリ
+
+そのため、端末から起動する場合は ROM 一式をカレントディレクトリに置くか、macOS では `~/Library/Application Support/X88000M/` に配置すると扱いやすくなります。`.app` を Finder から起動する場合も、基本的にはこの `Application Support` 配下へ置く運用を想定しています。
+
+必要なら、`build/X88000.app/Contents/Resources/` に ROM を置いて self-contained な bundle として扱うこともできます。
+
+設定ファイル `X88000.ini` と `Debug.log` は、macOS では `~/Library/Application Support/X88000M/` に保存されます。
 
 代表的に参照されるファイル名は以下です。
 
