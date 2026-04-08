@@ -104,10 +104,13 @@ protected:
 	static SampleOutputCallback m_pSampleOutputCallback;
 
 	// ----- SSG (PSG) synthesis state (Phase C-SSG) -----
-	// SSG section is clocked at base_clock / prescaler_psg / 16, which
-	// is about 62.5 kHz for the typical PC-8801 configuration. The
-	// fractional accumulator tracks how many internal SSG ticks should
-	// fire per output sample, in 16.16 fixed point.
+	// SSG internal counters advance at base_clock / prescaler_psg / 4,
+	// which is about 250 kHz for the typical PC-8801 configuration.
+	// (See docs/YM2203.md for the rationale — the literal "fc/16" in
+	// the YM2149 datasheet refers to the full waveform period
+	// multiplier, not the per-tick divider.) The fractional
+	// accumulator tracks how many internal SSG ticks should fire per
+	// output sample, in 16.16 fixed point.
 	static int m_nSsgTicksPerSampleX16;
 	static int m_nSsgTickAccumX16;
 	// Per-channel tone state.
@@ -131,8 +134,12 @@ protected:
 	// Mixer (from register $07): tone disable bits 0..2, noise disable bits 3..5
 	static uint8_t m_btSsgMixer;
 	// Pre-computed amplitude tables (Initialize() generates from formulas).
-	static int m_anSsgVolTable[SSG_VOL_TABLE_SIZE];   // 16 levels, ~1.5 dB/step
-	static int m_anSsgEnvTable[SSG_ENV_TABLE_SIZE];   // 32 levels, ~0.75 dB/step
+	// YM2149 datasheet: vol register is 4-bit log with 0.707 voltage
+	// ratio between adjacent levels (= 3 dB/step). The 32-step
+	// envelope generator is 5-bit (= 1.5 dB/step, half the volume
+	// register's resolution).
+	static int m_anSsgVolTable[SSG_VOL_TABLE_SIZE];   // 16 levels, 3 dB/step
+	static int m_anSsgEnvTable[SSG_ENV_TABLE_SIZE];   // 32 levels, 1.5 dB/step
 
 public:
 	// get base clock

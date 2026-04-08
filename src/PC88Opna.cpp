@@ -153,19 +153,27 @@ CPC88Opna::~CPC88Opna() {
 // initialize
 
 // initialize at first
+//
+// Initialize() is responsible for one-time setup that does NOT need
+// to be re-done on every emulator reset:
+//   - Base clock default
+//   - Output amplitude tables (purely a function of constants)
+//   - Sample rate default (only if the frontend hasn't set one yet)
+//
+// All runtime state (register mirror, channel state, accumulators,
+// envelope state, mixer, etc.) is handled by Reset(). The frontend
+// always calls Initialize() and then Reset() so calling Reset() from
+// within Initialize() would be redundant; instead we rely on the
+// caller to do it.
 
 void CPC88Opna::Initialize() {
 	m_nBaseClock = 4;
 	BuildSsgTables();
 	if (m_nSampleRate <= 0) {
 		// Default to 44.1 kHz; the frontend may override via
-		// SetSampleRate() before the first PassClock() call.
+		// SetSampleRate() before or after Initialize().
 		SetSampleRate(44100);
 	}
-	for (int n = 0; n < REGISTER_COUNT; n++) {
-		m_abtRegisters[n] = 0;
-	}
-	m_nSampleAccumX256 = 0;
 }
 
 // reset
@@ -212,7 +220,12 @@ void CPC88Opna::Reset() {
 	m_nSsgEnvCounter   = 1;
 	m_nSsgEnvLevel     = 0;
 	m_nSsgEnvDir       = -1;
-	m_bSsgEnvHolding   = false;
+	// Start the envelope generator in the "holding" state. Real
+	// hardware doesn't run the envelope until the first $0D write
+	// configures a shape, and emitting an unsolicited envelope step
+	// here would briefly affect channels that already have the
+	// envelope-use bit set in $08-$0A from a previous Reset().
+	m_bSsgEnvHolding   = true;
 	// Mixer default: tones disabled, noise disabled (all bits 1).
 	m_btSsgMixer       = 0xFF;
 	UpdateSsgTickRate();
@@ -488,7 +501,7 @@ void CPC88Opna::AdvanceSsgOneTick() {
 	// Envelope: the YM2149 spec defines f_envelope = fc/(256 × EP),
 	// but this is the rate of one COMPLETE 32-step cycle (not the per-
 	// step rate). One step therefore takes 8×EP/fc seconds, which at
-	// our fc/8 SSG tick rate is exactly EP ticks per step.
+	// our fc/4 SSG tick rate is exactly EP ticks per step.
 	if (!m_bSsgEnvHolding) {
 		if (--m_nSsgEnvCounter <= 0) {
 			int nPeriod = m_nSsgEnvPeriod;
@@ -624,7 +637,7 @@ void CPC88Opna::OnSsgRegisterWrite(int nAddress, uint8_t btData) {
 		bool bAtt = (nShape & 0x04) != 0;
 		m_nSsgEnvDir   = bAtt? +1: -1;
 		m_nSsgEnvLevel = bAtt? 0: 31;
-		// One env step every EP ticks at fc/8 (see AdvanceSsgOneTick).
+		// One env step every EP ticks at fc/4 (see AdvanceSsgOneTick).
 		int nP = m_nSsgEnvPeriod;
 		if (nP < 1) nP = 1;
 		m_nSsgEnvCounter = nP;
