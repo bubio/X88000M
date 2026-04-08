@@ -18,6 +18,7 @@
 
 #include <atomic>
 #include <stdint.h>
+#include <vector>
 
 class CSdl3AudioOutput {
 public:
@@ -64,9 +65,10 @@ public:
 	void SetBeepMute    (bool bMute);
 	void SetPcgMute     (bool bMute);
 
-	// Push pre-mixed YM2203 samples (Phase C). The data is interleaved
-	// stereo int16 at the same sample rate as the audio device.
-	// Currently a stub — Phase C will wire this up.
+	// Push pre-mixed YM2203 samples produced by the emulator thread.
+	// The data is interleaved stereo int16 at the same sample rate as
+	// the audio device. Frames that don't fit in the ring buffer are
+	// silently dropped (rather than blocking the emulator thread).
 	void PushOpnSamples(const int16_t* pbBuf, int nFrames);
 
 private:
@@ -100,6 +102,16 @@ private:
 	std::atomic<bool> m_abBeepExt;
 	// Each PCG channel stores the current 8253 counter (-1 == off).
 	std::atomic<int>  m_anPcgCounter[PCG_CHANNEL_COUNT];
+
+	// Single-producer / single-consumer ring buffer of stereo int16
+	// frames coming from the YM2203 (PC88Opna). Producer is the
+	// emulator thread (PushOpnSamples); consumer is the audio
+	// callback inside Synthesize(). The capacity is fixed and
+	// allocated in Initialize() to a power of two so masking works.
+	std::vector<int16_t>  m_vOpnRing;       // size = capacity * 2 (stereo)
+	int                   m_nOpnRingFrames; // capacity in stereo frames (power of 2)
+	std::atomic<uint32_t> m_nOpnWriteIdx;   // producer index (monotonic, frames)
+	std::atomic<uint32_t> m_nOpnReadIdx;    // consumer index (monotonic, frames)
 
 	// SDL3 audio stream callback. additional_amount is the number of
 	// bytes the stream is requesting; we synthesize that many samples

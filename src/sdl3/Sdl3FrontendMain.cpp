@@ -649,6 +649,11 @@ void OnCorePcgOutput(int nChannel, int nCounter)
 	g_audio.SetPcgChannel(nChannel, nCounter);
 }
 
+void OnCoreOpnaSampleOutput(const int16_t* pSamples, int nFrames)
+{
+	g_audio.PushOpnSamples(pSamples, nFrames);
+}
+
 std::string ToLowerAscii(std::string strText)
 {
 	for (size_t n = 0; n < strText.size(); n++) {
@@ -1067,6 +1072,8 @@ bool InitializeCore()
 	CPC88::Z80Main().SetIntVectChangeCallback(OnCoreIntVectChanged);
 	CPC88::Z80Main().SetBeepOutputCallback(OnCoreBeepOutput);
 	CPC88::Pcg().SetPcgSoundOutputCallback(OnCorePcgOutput);
+	CPC88::Opna().SetSampleOutputCallback(OnCoreOpnaSampleOutput);
+	CPC88::Opna().SetSampleRate(44100);
 	CPC88::Z80Main().SetParallelDevice(g_parallelNull);
 	g_parallelNull.Initialize();
 	g_parallelNull.Reset();
