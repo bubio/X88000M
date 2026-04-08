@@ -41,6 +41,31 @@ public:
 		SSG_VOL_TABLE_SIZE = 16,
 		SSG_ENV_TABLE_SIZE = 32
 	};
+	// FM (YM2203) constants
+	enum {
+		FM_CHANNEL_COUNT  = 3,
+		FM_OP_PER_CHANNEL = 4,
+		FM_OPERATOR_COUNT = FM_CHANNEL_COUNT * FM_OP_PER_CHANNEL,  // 12
+		// Phase accumulator: 20 fractional bits over a full sin period.
+		// Top bits index the sin table after taking the upper portion.
+		FM_PHASE_BITS     = 20,
+		// Sin / Exp table sizes (1/4 sin period, 256-step log domain).
+		FM_SIN_TABLE_SIZE = 256,
+		FM_EXP_TABLE_SIZE = 256,
+		// Envelope rate table covers all valid effective rate values.
+		FM_ENV_RATE_TABLE_SIZE = 64,
+		// Detune table: 4 KC range × 32 KC value × 8 DT values.
+		FM_DT_KC_RANGES   = 4,
+		FM_DT_KC_VALUES   = 32
+	};
+	// FM envelope generator state values
+	enum {
+		FM_ENV_OFF     = 0,
+		FM_ENV_ATTACK  = 1,
+		FM_ENV_DECAY   = 2,
+		FM_ENV_SUSTAIN = 3,
+		FM_ENV_RELEASE = 4
+	};
 
 // attribute
 protected:
@@ -103,6 +128,10 @@ protected:
 	// Sample output callback (set by the frontend; may be NULL).
 	static SampleOutputCallback m_pSampleOutputCallback;
 
+	// Per-section mute (Debug menu — Generate() still updates state).
+	static bool m_bFmMute;
+	static bool m_bSsgMute;
+
 	// ----- SSG (PSG) synthesis state (Phase C-SSG) -----
 	// SSG internal counters advance at base_clock / prescaler_psg / 4,
 	// which is about 250 kHz for the typical PC-8801 configuration.
@@ -140,6 +169,98 @@ protected:
 	// register's resolution).
 	static int m_anSsgVolTable[SSG_VOL_TABLE_SIZE];   // 16 levels, 3 dB/step
 	static int m_anSsgEnvTable[SSG_ENV_TABLE_SIZE];   // 32 levels, 1.5 dB/step
+
+	// ----- FM (YM2203) synthesis state (Phase C-FM) -----
+	//
+	// One SFmOperator per slot (4 ops × 3 channels = 12 active ops). All
+	// values are derived from the register mirror via OnFmRegisterWrite()
+	// at write time, so the per-sample render path can read them directly
+	// without bit twiddling on every sample.
+	struct SFmOperator {
+		// Phase generator (FM_PHASE_BITS-bit fixed point).
+		uint32_t nPhase;
+		uint32_t nPhaseInc;
+		// Envelope generator.
+		int      nEnvLevel;        // 0..1023, attenuation (large = quiet)
+		int      nEnvState;        // FM_ENV_*
+		int      nEnvCounter;      // rate timing accumulator
+		// Slot parameters (decoded from registers).
+		uint8_t  btTl;             // 0..127 (Total Level, 0 = loudest)
+		uint8_t  btAr, btDr, btSr, btRr;
+		uint8_t  btSl;             // 0..15
+		uint8_t  btKs;             // 0..3
+		uint8_t  btMul;            // 0..15
+		uint8_t  btDt;             // 0..7 (3-bit signed-magnitude detune)
+		bool     bKeyOn;
+		// Most recent linear sample output, used by ALGO 0..6 for the
+		// "previous operator output" modulation chain and by OP1 self-
+		// feedback in all algorithms.
+		int      nOutPrev;
+	};
+
+	struct SFmChannel {
+		// Operator array, indexed by physical operator number 0..3
+		// (= OP1..OP4 in 1-based notation). The 1-3-2-4 slot layout in
+		// the register space is unwound by the dispatch in
+		// OnFmRegisterWrite(), so this array is in the natural order.
+		SFmOperator aOp[FM_OP_PER_CHANNEL];
+		// Channel-wide parameters.
+		uint16_t wFnum;            // 11-bit
+		uint8_t  btBlock;          // 0..7
+		uint8_t  btAlgo;           // 0..7
+		uint8_t  btFb;             // 0..7 (OP1 self-feedback amount)
+		// OP1 self-feedback history. Two samples averaged into the OP1
+		// phase modulation input on the next sample.
+		int      anFeedback[2];
+		// CH3 special mode storage (only used by ch[2]).
+		// op0/op1/op2 use these per-operator F-Number/Block values when
+		// special mode is active. op3 always uses wFnum/btBlock above.
+		uint16_t awFnumPerOp[3];
+		uint8_t  abtBlockPerOp[3];
+	};
+
+	static SFmChannel m_aFmCh[FM_CHANNEL_COUNT];
+	// CH3 special mode flag, mirrored from $27 bits 6-7 (any non-zero
+	// value enables it; we don't distinguish between the three sub-modes
+	// because they only differ in trigger semantics on real hardware).
+	static bool m_bFmCh3SpecialMode;
+
+	// F-Number high latch. The YM2203 implements F-Num/Block as two
+	// register groups: $A4-$A6 (BLOCK + FNUM[10:8]) and $A0-$A2
+	// (FNUM[7:0]). Real hardware does NOT update the channel until the
+	// LOW byte is written; the HIGH byte just goes into a per-write
+	// temp latch. Software must therefore write HIGH first, then LOW
+	// to commit. We mirror this so that interleaved writes don't
+	// produce a momentarily wrong phase increment.
+	static uint8_t m_abtFmFnumLatch[FM_CHANNEL_COUNT];   // BLOCK<<3 | FNUM[10:8]
+	static uint8_t m_abtFmCh3FnumLatch[3];               // CH3 special, OP1..OP3
+
+	// FM section internal clock conversion. The FM section advances at
+	// master_clock / (prescaler_fm * 6) Hz; we accumulate Z80-cycle
+	// equivalents per output sample using a 16.16 fixed-point counter.
+	// (Per-sample we step the FM operator phase by nPhaseInc directly,
+	// so the cycle accumulator is currently informational only.)
+	static int m_nFmTicksPerSampleX16;
+
+	// 16.16 fixed-point scale factor used by RecomputeFmOperatorPhaseInc
+	// to convert (FNUM << BLOCK) × MUL into a per-output-sample phase
+	// increment. Derived from:
+	//
+	//   phase_inc = FNUM × 2^BLOCK × master_clock /
+	//               (prescaler_fm × 24 × sample_rate)
+	//
+	// which is the YM2203 spec frequency formula
+	//   f_out = FNUM × master / (144 × 2^(20-BLOCK))
+	// rearranged into "phase advance per output sample" units, where
+	// the 20-bit phase accumulator covers one full sin period.
+	static int m_nFmPhaseScaleX16;
+
+	// Pre-computed FM tables (BuildFmTables() generates them at startup).
+	// All entries derived from formulas — no copied constant tables.
+	static int m_anFmSinTable[FM_SIN_TABLE_SIZE];      // 1/4 period, log domain
+	static int m_anFmExpTable[FM_EXP_TABLE_SIZE];      // log → linear conversion
+	static int m_anFmEnvRateTable[FM_ENV_RATE_TABLE_SIZE]; // rate → counter inc per sample
+	static int m_anFmDetuneTable[FM_DT_KC_RANGES][FM_DT_KC_VALUES]; // KC × DT offset
 
 public:
 	// get base clock
@@ -184,6 +305,14 @@ public:
 		}
 		return m_abtRegisters[nAddress];
 	}
+
+	// per-section mute (Debug menu). The synthesis still runs so state
+	// stays consistent — only the contribution to the output sample is
+	// suppressed.
+	static void SetFmMute(bool bMute)  { m_bFmMute  = bMute; }
+	static void SetSsgMute(bool bMute) { m_bSsgMute = bMute; }
+	static bool GetFmMute()  { return m_bFmMute; }
+	static bool GetSsgMute() { return m_bSsgMute; }
 
 // create & destroy
 public:
@@ -253,6 +382,51 @@ protected:
 	// Internal: handle a register write that targets the SSG section
 	// ($00–$0F). Called from WriteData().
 	static void OnSsgRegisterWrite(int nAddress, uint8_t btData);
+
+	// ----- Phase C-FM internal helpers -----
+	// Build sin/exp/envelope-rate/detune tables from formulas. Called
+	// once from Initialize().
+	static void BuildFmTables();
+	// Reset all FM operator and channel state. Called from Reset()
+	// after the SSG state has been cleared.
+	static void ResetFmState();
+	// Recompute the FM ticks-per-output-sample ratio whenever base
+	// clock, prescaler_fm, or sample rate changes.
+	static void UpdateFmTickRate();
+	// Recompute one operator's nPhaseInc from the channel's F-number,
+	// block, MUL, and DT values. Called whenever any of those change.
+	static void RecomputeFmOperatorPhaseInc(int nChannel, int nOpIndex);
+	// Recompute phase increments for all operators of a given channel
+	// (used after F-number / block writes that affect every op).
+	static void RecomputeFmChannelPhaseIncs(int nChannel);
+	// Handle a register write to any FM-related address ($28, $30–$9E,
+	// $A0–$AE, $B0–$B2). Called from WriteData() after the register
+	// mirror has been updated.
+	static void OnFmRegisterWrite(int nAddress, uint8_t btData);
+	// Handle a write to register $28 (key on/off mask + channel index).
+	static void OnFmKeyOnOff(uint8_t btData);
+	// Map an address in $30–$9E to (channel, op_index_0_based) using
+	// the YM-family 1-3-2-4 slot order. Returns false if the address
+	// targets the unused slot column (channel 3 / op4 of an absent
+	// fourth channel).
+	static bool ResolveFmSlotAddress(int nAddress, int& nChannel, int& nOpIndex);
+	// Compute one operator output sample. nModulation is added to the
+	// 10-bit phase index in the same units the YM family uses (= the
+	// previous operator's linear output, suitably shifted).
+	// Returns a signed linear sample roughly in [-FM_OP_MAX_LINEAR,
+	// +FM_OP_MAX_LINEAR].
+	static int RenderFmOperator(SFmOperator& op, int nModulation);
+	// Advance one operator's envelope state machine by one sample.
+	// nKsr is the precomputed key-scaling rate offset (0..3) for this
+	// operator's current channel pitch.
+	static void AdvanceFmEnvelope(SFmOperator& op, int nKsr);
+	// Compute the key-scale rate offset for a channel.
+	static int ComputeFmKsr(int nChannel, int nOpIndex);
+	// Render one channel's mono sample, including all 8 algorithms
+	// and OP1 self-feedback. Returns a signed int (caller mixes).
+	static int RenderFmChannel(int nChannel);
+	// Render one mono FM sample by mixing all 3 channels.
+	static int RenderFmSample();
 
 public:
 	// timer A overflow

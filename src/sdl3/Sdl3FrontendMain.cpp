@@ -1414,7 +1414,13 @@ int main(int argc, char** argv) {
 		ApplyEnvSettingsFromIni(settings);
 		// Re-apply reset so the env-driven dip switches take effect.
 		CPC88::Reset();
+		// Mount any media specified on the command line, then reset
+		// once more so the BIOS sees the disk during its boot poll.
+		bool bHadCliMedia = (argc > 1);
 		ParseInitialMediaArgs(argc, argv);
+		if (bHadCliMedia) {
+			CPC88::Reset();
+		}
 	}
 #endif
 
@@ -1683,6 +1689,19 @@ int main(int argc, char** argv) {
 					ImGui::Separator();
 					if (ImGui::MenuItem("Status Panel", NULL, bShowStatusWindow)) {
 						bShowStatusWindow = !bShowStatusWindow;
+					}
+					ImGui::EndMenu();
+				}
+
+				// ----- Debug menu -----
+				if (ImGui::BeginMenu("Debug", bCoreReady)) {
+					bool bFmMute  = CPC88::Opna().GetFmMute();
+					bool bSsgMute = CPC88::Opna().GetSsgMute();
+					if (ImGui::MenuItem("Mute FM", NULL, bFmMute)) {
+						CPC88::Opna().SetFmMute(!bFmMute);
+					}
+					if (ImGui::MenuItem("Mute SSG", NULL, bSsgMute)) {
+						CPC88::Opna().SetSsgMute(!bSsgMute);
 					}
 					ImGui::EndMenu();
 				}
