@@ -541,7 +541,13 @@ void CPC88Opna::Generate(int nFrames) {
 			int nSsgSample = RenderSsgSample();
 			int nFmSample  = RenderFmSample();
 			int nSample    = 0;
-			if (!m_bSsgMute) nSample += nSsgSample;
+			// Mix SSG and FM with relative balance. Real PC-88 hardware
+			// outputs SSG at a lower level than FM; halving the SSG
+			// contribution here roughly matches the perceived balance.
+			// (The SSG peak is ~24000 vs FM ~12288 after the 14-bit
+			// op output >> 1 in RenderFmSample, so >> 1 on SSG brings
+			// both sections to a similar range.)
+			if (!m_bSsgMute) nSample += nSsgSample >> 1;
 			if (!m_bFmMute)  nSample += nFmSample;
 			if (nSample >  32767) nSample =  32767;
 			if (nSample < -32768) nSample = -32768;
