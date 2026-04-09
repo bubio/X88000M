@@ -575,6 +575,384 @@ void DrawTapeImageManagerWindow(bool& bShow, SDL_Window* pWindow)
 	ImGui::End();
 }
 
+void DrawDebugMainWindow(bool& bShow)
+{
+	if (!bShow) {
+		return;
+	}
+	ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Debugger", &bShow, ImGuiWindowFlags_NoCollapse)) {
+		bool bDebugMode = CPC88::IsDebugMode();
+		bool bStopped = CPC88::IsDebugStopped();
+		bool bMainCPU = CPC88::IsDebugMain();
+		CZ80Adapter* pZ80A = bDebugMode ? CPC88::GetDebugAdapter() : NULL;
+
+		// CPU target selector
+		ImGui::TextUnformatted("Target CPU:");
+		ImGui::SameLine();
+		bool bSubDisabled = CPC88::IsSubSystemDisableNow();
+		if (ImGui::RadioButton("Main", bDebugMode && bMainCPU)) {
+			CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_MAIN);
+		}
+		ImGui::SameLine();
+		ImGui::BeginDisabled(bSubDisabled);
+		if (ImGui::RadioButton("Sub", bDebugMode && !bMainCPU)) {
+			CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_SUB);
+		}
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		if (ImGui::RadioButton("Off", !bDebugMode)) {
+			CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_NONE);
+		}
+
+		ImGui::Separator();
+
+		// Execution controls
+		ImGui::BeginDisabled(!bDebugMode);
+		if (bStopped) {
+			if (ImGui::Button("Run")) {
+				CPC88::SetDebugStop(false);
+			}
+		} else {
+			if (ImGui::Button("Break")) {
+				CPC88::SetDebugStop(true);
+			}
+		}
+		ImGui::SameLine();
+		ImGui::BeginDisabled(!bStopped);
+		if (ImGui::Button("Step")) {
+			CPC88::DebugExecuteStepTrace(CPC88::DEBUGSTEP_STEP);
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Trace")) {
+			CPC88::DebugExecuteStepTrace(CPC88::DEBUGSTEP_TRACE);
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Step2")) {
+			CPC88::DebugExecuteStepTrace(CPC88::DEBUGSTEP_STEP2);
+		}
+		ImGui::EndDisabled();
+		ImGui::EndDisabled();
+
+		ImGui::Separator();
+
+		// Register display (only when debug mode is active and stopped)
+		if (bDebugMode && bStopped && pZ80A != NULL) {
+			// Mnemonic at current PC
+			uint16_t wPC = CPC88::GetDebugPC();
+			const char* pszMnemonic = pZ80A->GetMnemonic();
+			ImGui::Text("PC: %04X  %s", wPC, pszMnemonic ? pszMnemonic : "");
+			ImGui::Separator();
+
+			// Main registers
+			ImGui::Text("AF: %04X    AF': %04X",
+				pZ80A->RegAF().Get(), pZ80A->RegAF2().Get());
+			ImGui::Text("BC: %04X    BC': %04X",
+				pZ80A->RegBC().Get(), pZ80A->RegBC2().Get());
+			ImGui::Text("DE: %04X    DE': %04X",
+				pZ80A->RegDE().Get(), pZ80A->RegDE2().Get());
+			ImGui::Text("HL: %04X    HL': %04X",
+				pZ80A->RegHL().Get(), pZ80A->RegHL2().Get());
+			ImGui::Text("IX: %04X    IY:  %04X",
+				pZ80A->RegIX().Get(), pZ80A->RegIY().Get());
+			ImGui::Text("SP: %04X",
+				pZ80A->RegSP().Get());
+
+			ImGui::Separator();
+
+			// I, R, IM, IFF
+			ImGui::Text("I: %02X  R: %02X  IM: %d",
+				pZ80A->GetRegI(), pZ80A->GetRegR(),
+				pZ80A->GetInterruptMode());
+			ImGui::Text("IFF1: %s  IFF2: %s  HALT: %s",
+				pZ80A->IsEnableInterrupt() ? "on" : "off",
+				pZ80A->IsEnableInterrupt2() ? "on" : "off",
+				pZ80A->IsHalting() ? "yes" : "no");
+
+			ImGui::Separator();
+
+			// Flags
+			uint8_t btF = pZ80A->RegF().Get();
+			ImGui::Text("Flags: %c%c%c%c%c%c",
+				(btF & CZ80Adapter::S_FLAG)   ? 'S' : '-',
+				(btF & CZ80Adapter::Z_FLAG)   ? 'Z' : '-',
+				(btF & CZ80Adapter::H_FLAG)   ? 'H' : '-',
+				(btF & CZ80Adapter::P_V_FLAG) ? 'P' : '-',
+				(btF & CZ80Adapter::N_FLAG)   ? 'N' : '-',
+				(btF & CZ80Adapter::C_FLAG)   ? 'C' : '-');
+		} else if (bDebugMode && !bStopped) {
+			ImGui::TextDisabled("(running...)");
+		} else {
+			ImGui::TextDisabled("Select Main or Sub CPU to start debugging.");
+		}
+	}
+	ImGui::End();
+}
+
+void DrawDisassembleWindow(bool& bShow)
+{
+	if (!bShow) {
+		return;
+	}
+	static char szAddr[8] = "";
+	static bool bFollowPC = true;
+
+	ImGui::SetNextWindowSize(ImVec2(400, 360), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Disassemble", &bShow, ImGuiWindowFlags_NoCollapse)) {
+		bool bDebugMode = CPC88::IsDebugMode();
+		bool bStopped = CPC88::IsDebugStopped();
+		CZ80Adapter* pZ80A = bDebugMode ? CPC88::GetDebugAdapter() : NULL;
+
+		ImGui::Checkbox("Follow PC", &bFollowPC);
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth(80);
+		ImGui::InputText("Addr", szAddr, sizeof(szAddr),
+			ImGuiInputTextFlags_CharsHexadecimal);
+
+		ImGui::Separator();
+
+		if (bDebugMode && bStopped && pZ80A != NULL) {
+			uint16_t wStartAddr;
+			if (!bFollowPC && szAddr[0] != '\0') {
+				wStartAddr = (uint16_t)strtoul(szAddr, NULL, 16);
+			} else {
+				wStartAddr = CPC88::GetDebugPC();
+			}
+
+			// Save and restore PC around disassembly
+			uint16_t wPCOrg = pZ80A->RegPC().Get();
+			pZ80A->RegPC().Set(wStartAddr);
+
+			uint16_t wDebugPC = CPC88::GetDebugPC();
+			int nLines = 32;
+
+			if (ImGui::BeginChild("DisasmList", ImVec2(0, 0), ImGuiChildFlags_None)) {
+				for (int i = 0; i < nLines; i++) {
+					uint16_t wPC = pZ80A->RegPC().Get();
+					pZ80A->DisAssemble();
+					const char* pszMne = pZ80A->GetMnemonic();
+
+					// Read raw bytes for hex display
+					uint16_t wNext = pZ80A->RegPC().Get();
+					int nBytes = (int)(uint16_t)(wNext - wPC);
+					if (nBytes <= 0) nBytes += 0x10000;
+					if (nBytes > 4) nBytes = 4;
+					char szHex[16] = "";
+					int nOff = 0;
+					for (int b = 0; b < nBytes && nOff < (int)sizeof(szHex) - 3; b++) {
+						nOff += snprintf(szHex + nOff, sizeof(szHex) - nOff,
+							"%02X ", pZ80A->ReadMemory((uint16_t)(wPC + b)));
+					}
+
+					bool bCurrent = (wPC == wDebugPC);
+					if (bCurrent) {
+						ImGui::PushStyleColor(ImGuiCol_Text,
+							ImVec4(1.0f, 1.0f, 0.3f, 1.0f));
+					}
+					ImGui::Text("%c%04X: %-12s %s",
+						bCurrent ? '>' : ' ', wPC, szHex,
+						pszMne ? pszMne : "???");
+					if (bCurrent) {
+						ImGui::PopStyleColor();
+						if (bFollowPC) {
+							ImGui::SetScrollHereY(0.3f);
+						}
+					}
+				}
+			}
+			ImGui::EndChild();
+
+			pZ80A->RegPC().Set(wPCOrg);
+			// Restore mnemonic state
+			pZ80A->DisAssemble();
+			pZ80A->RegPC().Set(wPCOrg);
+		} else {
+			ImGui::TextDisabled("(debugger not active or running)");
+		}
+	}
+	ImGui::End();
+}
+
+void DrawMemoryDumpWindow(bool& bShow)
+{
+	if (!bShow) {
+		return;
+	}
+	static char szAddr[8] = "0000";
+	static int nMemTarget = 0; // 0=Main, 1=Sub
+
+	ImGui::SetNextWindowSize(ImVec2(480, 360), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Memory Dump", &bShow, ImGuiWindowFlags_NoCollapse)) {
+		bool bDebugMode = CPC88::IsDebugMode();
+		bool bStopped = CPC88::IsDebugStopped();
+
+		ImGui::RadioButton("Main", &nMemTarget, 0);
+		ImGui::SameLine();
+		bool bSubDisabled = CPC88::IsSubSystemDisableNow();
+		ImGui::BeginDisabled(bSubDisabled);
+		ImGui::RadioButton("Sub", &nMemTarget, 1);
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth(80);
+		ImGui::InputText("Addr", szAddr, sizeof(szAddr),
+			ImGuiInputTextFlags_CharsHexadecimal);
+
+		ImGui::Separator();
+
+		if (bDebugMode && bStopped) {
+			// Pick the adapter for the selected memory target
+			CZ80Adapter* pMainA = CPC88::Z80Main().GetAdapter();
+			CZ80Adapter* pSubA  = CPC88::Z80Sub().GetAdapter();
+			CZ80Adapter* pMemA  = (nMemTarget == 0) ? pMainA : pSubA;
+			if (pMemA == NULL) {
+				pMemA = CPC88::GetDebugAdapter();
+			}
+
+			uint16_t wBase = (uint16_t)strtoul(szAddr, NULL, 16);
+			wBase &= 0xFFF0; // align to 16
+
+			int nRows = 16;
+			if (ImGui::BeginChild("DumpList", ImVec2(0, 0), ImGuiChildFlags_None)) {
+				for (int r = 0; r < nRows; r++) {
+					uint16_t wRowAddr = (uint16_t)(wBase + r * 16);
+					char szLine[128];
+					int nPos = snprintf(szLine, sizeof(szLine), "%04X: ", wRowAddr);
+
+					char szAscii[17];
+					for (int c = 0; c < 16; c++) {
+						uint8_t bt = pMemA->ReadMemory((uint16_t)(wRowAddr + c));
+						nPos += snprintf(szLine + nPos, sizeof(szLine) - nPos,
+							"%02X ", bt);
+						szAscii[c] = (bt >= 0x20 && bt < 0x7F) ? (char)bt : '.';
+					}
+					szAscii[16] = '\0';
+					snprintf(szLine + nPos, sizeof(szLine) - nPos, " %s", szAscii);
+					ImGui::TextUnformatted(szLine);
+				}
+			}
+			ImGui::EndChild();
+		} else {
+			ImGui::TextDisabled("(debugger not active or running)");
+		}
+	}
+	ImGui::End();
+}
+
+void DrawBreakpointWindow(bool& bShow)
+{
+	if (!bShow) {
+		return;
+	}
+	static char szAddr[8] = "";
+
+	ImGui::SetNextWindowSize(ImVec2(300, 280), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Breakpoints", &bShow, ImGuiWindowFlags_NoCollapse)) {
+		bool bDebugMode = CPC88::IsDebugMode();
+
+		ImGui::BeginDisabled(!bDebugMode);
+		ImGui::SetNextItemWidth(80);
+		ImGui::InputText("Addr", szAddr, sizeof(szAddr),
+			ImGuiInputTextFlags_CharsHexadecimal);
+		ImGui::SameLine();
+		if (ImGui::Button("Add") && szAddr[0] != '\0') {
+			uint16_t wAddr = (uint16_t)strtoul(szAddr, NULL, 16);
+			CPC88::RegisterBreakPoint(wAddr);
+			szAddr[0] = '\0';
+		}
+
+		ImGui::Separator();
+
+		if (bDebugMode) {
+			bool bMain = CPC88::IsDebugMain();
+			std::set<uint16_t>* pSet = CPC88::GetBreakPoint(bMain);
+
+			ImGui::Text("CPU: %s  (%d breakpoints)",
+				bMain ? "Main" : "Sub", (int)pSet->size());
+
+			if (ImGui::BeginChild("BPList", ImVec2(0, 0), ImGuiChildFlags_None)) {
+				uint16_t wRemove = 0;
+				bool bRemoveReq = false;
+				for (std::set<uint16_t>::iterator it = pSet->begin();
+					it != pSet->end(); ++it)
+				{
+					ImGui::PushID((int)*it);
+					ImGui::Text("%04X", *it);
+					ImGui::SameLine();
+					if (ImGui::SmallButton("Del")) {
+						wRemove = *it;
+						bRemoveReq = true;
+					}
+					ImGui::PopID();
+				}
+				if (bRemoveReq) {
+					CPC88::RemoveBreakPoint(wRemove);
+				}
+			}
+			ImGui::EndChild();
+		} else {
+			ImGui::TextDisabled("(debugger not active)");
+		}
+		ImGui::EndDisabled();
+	}
+	ImGui::End();
+}
+
+void DrawWriteRamWindow(bool& bShow)
+{
+	if (!bShow) {
+		return;
+	}
+	static char szAddr[8] = "";
+	static char szData[8] = "";
+	static int nTarget = 0; // 0=MainMem, 1=SubMem, 2=I/O
+
+	ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Write RAM", &bShow, ImGuiWindowFlags_NoCollapse)) {
+		bool bDebugMode = CPC88::IsDebugMode();
+		bool bStopped = CPC88::IsDebugStopped();
+
+		ImGui::BeginDisabled(!bDebugMode || !bStopped);
+
+		ImGui::RadioButton("Main RAM", &nTarget, 0);
+		ImGui::SameLine();
+		ImGui::RadioButton("Sub RAM", &nTarget, 1);
+		ImGui::SameLine();
+		ImGui::RadioButton("I/O", &nTarget, 2);
+
+		ImGui::SetNextItemWidth(80);
+		ImGui::InputText("Addr", szAddr, sizeof(szAddr),
+			ImGuiInputTextFlags_CharsHexadecimal);
+		ImGui::SetNextItemWidth(80);
+		ImGui::InputText("Data (hex)", szData, sizeof(szData),
+			ImGuiInputTextFlags_CharsHexadecimal);
+
+		if (ImGui::Button("Write") && szAddr[0] != '\0' && szData[0] != '\0') {
+			uint16_t wAddr = (uint16_t)strtoul(szAddr, NULL, 16);
+			uint8_t btData = (uint8_t)strtoul(szData, NULL, 16);
+			CZ80Adapter* pMainA = CPC88::Z80Main().GetAdapter();
+			CZ80Adapter* pSubA  = CPC88::Z80Sub().GetAdapter();
+			if (nTarget == 0 && pMainA) {
+				pMainA->WriteMemory(wAddr, btData);
+			} else if (nTarget == 1 && pSubA) {
+				pSubA->WriteMemory(wAddr, btData);
+			} else if (nTarget == 2) {
+				CZ80Adapter* pA = CPC88::GetDebugAdapter();
+				if (pA) {
+					pA->WriteIO(wAddr, btData);
+				}
+			}
+			CPC88::UpdateMnemonic();
+		}
+
+		ImGui::EndDisabled();
+
+		if (!bDebugMode || !bStopped) {
+			ImGui::TextDisabled("(stop debugger first)");
+		}
+	}
+	ImGui::End();
+}
+
 #endif // X88000_SDL3_HAS_IMGUI
 
 std::string EnsureTrailingSlash(const std::string& fstrPath)
@@ -1397,6 +1775,11 @@ int main(int argc, char** argv) {
 	bool bShowEnvWindow = false;
 	bool bShowDiskWindow = false;
 	bool bShowTapeWindow = false;
+	bool bShowDebugWindow = false;
+	bool bShowDisasmWindow = false;
+	bool bShowMemDumpWindow = false;
+	bool bShowBreakpointWindow = false;
+	bool bShowWriteRamWindow = false;
 	SEnvSettingsView envView;
 	std::vector<uint32_t> vArgbBuffer;
 	const Uint64 nPerfFreq = SDL_GetPerformanceFrequency();
@@ -1722,8 +2105,63 @@ int main(int argc, char** argv) {
 
 				// ----- Debug menu -----
 				if (ImGui::BeginMenu("Debug", bCoreReady)) {
-					// Section-level mutes (toggle the entire FM or SSG
-					// section in one click).
+					// Debugger window toggle
+					if (ImGui::MenuItem("Debugger...", NULL, bShowDebugWindow)) {
+						bShowDebugWindow = !bShowDebugWindow;
+					}
+					ImGui::Separator();
+					// Quick debug CPU target
+					bool bDbgMain = CPC88::IsDebugMain();
+					bool bDbgSub  = CPC88::IsDebugSub();
+					if (ImGui::MenuItem("Debug Main CPU", NULL, bDbgMain)) {
+						if (bDbgMain) {
+							CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_NONE);
+						} else {
+							CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_MAIN);
+							bShowDebugWindow = true;
+						}
+					}
+					bool bSubDisabled = CPC88::IsSubSystemDisableNow();
+					ImGui::BeginDisabled(bSubDisabled);
+					if (ImGui::MenuItem("Debug Sub CPU", NULL, bDbgSub)) {
+						if (bDbgSub) {
+							CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_NONE);
+						} else {
+							CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_SUB);
+							bShowDebugWindow = true;
+						}
+					}
+					ImGui::EndDisabled();
+					ImGui::Separator();
+					// Step controls (enabled only when debug-stopped)
+					bool bStopped = CPC88::IsDebugStopped() && CPC88::IsDebugMode();
+					ImGui::BeginDisabled(!bStopped);
+					if (ImGui::MenuItem("Step", "F10")) {
+						CPC88::DebugExecuteStepTrace(CPC88::DEBUGSTEP_STEP);
+					}
+					if (ImGui::MenuItem("Trace", "F11")) {
+						CPC88::DebugExecuteStepTrace(CPC88::DEBUGSTEP_TRACE);
+					}
+					if (ImGui::MenuItem("Step2")) {
+						CPC88::DebugExecuteStepTrace(CPC88::DEBUGSTEP_STEP2);
+					}
+					ImGui::EndDisabled();
+					ImGui::Separator();
+					// Debug sub-windows
+					if (ImGui::MenuItem("Disassemble...", NULL, bShowDisasmWindow)) {
+						bShowDisasmWindow = !bShowDisasmWindow;
+					}
+					if (ImGui::MenuItem("Memory Dump...", NULL, bShowMemDumpWindow)) {
+						bShowMemDumpWindow = !bShowMemDumpWindow;
+					}
+					if (ImGui::MenuItem("Breakpoints...", NULL, bShowBreakpointWindow)) {
+						bShowBreakpointWindow = !bShowBreakpointWindow;
+					}
+					if (ImGui::MenuItem("Write RAM...", NULL, bShowWriteRamWindow)) {
+						bShowWriteRamWindow = !bShowWriteRamWindow;
+					}
+					ImGui::Separator();
+					// Audio mute controls
 					bool bFmMute  = CPC88::Opna().GetFmMute();
 					bool bSsgMute = CPC88::Opna().GetSsgMute();
 					if (ImGui::MenuItem("Mute FM (all)", NULL, bFmMute)) {
@@ -1733,10 +2171,6 @@ int main(int argc, char** argv) {
 						CPC88::Opna().SetSsgMute(!bSsgMute);
 					}
 					ImGui::Separator();
-					// Per-channel FM mute. The synthesis still runs so
-					// the FM debug log keeps reporting per-channel state
-					// even when a channel is muted — useful for
-					// correlating "what I hear" with "what's in the log".
 					for (int nCh = 0; nCh < 3; nCh++) {
 						char szLabel[32];
 						snprintf(szLabel, sizeof(szLabel), "Mute FM ch%d", nCh + 1);
@@ -1746,7 +2180,6 @@ int main(int argc, char** argv) {
 						}
 					}
 					ImGui::Separator();
-					// Per-channel SSG mute (channels A, B, C).
 					for (int nCh = 0; nCh < 3; nCh++) {
 						char szLabel[32];
 						snprintf(szLabel, sizeof(szLabel),
@@ -1801,6 +2234,21 @@ int main(int argc, char** argv) {
 			}
 			if (bCoreReady && bShowTapeWindow) {
 				DrawTapeImageManagerWindow(bShowTapeWindow, pWindow);
+			}
+			if (bCoreReady && bShowDebugWindow) {
+				DrawDebugMainWindow(bShowDebugWindow);
+			}
+			if (bCoreReady && bShowDisasmWindow) {
+				DrawDisassembleWindow(bShowDisasmWindow);
+			}
+			if (bCoreReady && bShowMemDumpWindow) {
+				DrawMemoryDumpWindow(bShowMemDumpWindow);
+			}
+			if (bCoreReady && bShowBreakpointWindow) {
+				DrawBreakpointWindow(bShowBreakpointWindow);
+			}
+			if (bCoreReady && bShowWriteRamWindow) {
+				DrawWriteRamWindow(bShowWriteRamWindow);
 			}
 #endif
 			if (bShowStatusWindow) {
