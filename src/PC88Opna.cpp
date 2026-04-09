@@ -372,6 +372,34 @@ void CPC88Opna::SetPreScaler(int nPreScalerFM, int nPreScalerPSG) {
 // read data
 
 uint8_t CPC88Opna::ReadData() {
+	// SSG registers $00–$0D are readable and return the last written
+	// value. $0E–$0F are I/O ports: when configured as input (bit 6/7
+	// of $07 = 0), reading returns the external port state; when
+	// configured as output, reading returns the last written value.
+	//
+	// Previously this returned a hard-coded 0xFF, which broke any
+	// read-modify-write sequence on $07 (the mixer / I/O direction
+	// register). Ys's sound driver reads $07 to preserve the mixer
+	// bits while changing I/O direction — getting $FF back caused
+	// the mixer to be overwritten with all-disabled, silencing the
+	// SSG melody channels entirely.
+	if ((m_nAddress >= 0x00) && (m_nAddress <= 0x0D)) {
+		return m_abtRegisters[m_nAddress];
+	}
+	if (m_nAddress == 0x0E || m_nAddress == 0x0F) {
+		// I/O ports $0E/$0F: direction is controlled by $07 bits 6/7.
+		// bit = 0 → input mode (read external hardware state)
+		// bit = 1 → output mode (read back last written value)
+		// On PC-88, $0E is joystick input (active low: $FF = no
+		// buttons pressed). When in input mode and no external
+		// hardware is connected, return $FF so the game sees "idle".
+		int nDirBit = (m_nAddress == 0x0E) ? 6 : 7;
+		bool bOutputMode = (m_abtRegisters[0x07] >> nDirBit) & 1;
+		if (bOutputMode) {
+			return m_abtRegisters[m_nAddress];
+		}
+		return 0xFF;  // input mode: no joystick press
+	}
 	return 0xFF;
 }
 
@@ -563,12 +591,14 @@ void CPC88Opna::UpdateSsgTickRate() {
 		m_nSsgTicksPerSampleX16 = 0;
 		return;
 	}
-	// SSG internal counters advance at base / prescaler_psg / 4. The
-	// literal YM2149 datasheet formula f = fc/(16*TP) is equivalent
-	// to "advance at fc/4 with TP/2 toggle interval" — practical PC-88
-	// SSG implementations use the fc/4 cadence so that tone counters
-	// stay integer with the TP values that PC-88 BGM actually writes.
-	// For 4 MHz / prescaler 4 this is 4_000_000 / 4 / 4 = 250 000 Hz.
+	// SSG internal counters advance at base / prescaler_psg / 4.
+	//
+	// The OPNA manual (page 37) gives f_tone = φM / (64 × TP) for
+	// φM = 8 MHz with SSG prescaler /4. For our 4 MHz setup the
+	// effective formula is f = φM / (32 × TP), which matches the
+	// tick rate of master / prescaler / 4 = 250 kHz with half-period
+	// toggle: f = 250 000 / (2 × TP). User-verified pitch matches
+	// PC-88 hardware for Ys FEENA and ハイドライド3.
 	long long nSsgClockHz =
 		(long long)m_nBaseClock * 1000000LL / m_nPreScalerPSG / 4LL;
 	m_nSsgTicksPerSampleX16 = (int)((nSsgClockHz * (1LL << 16)) / m_nSampleRate);
@@ -680,16 +710,28 @@ int CPC88Opna::RenderSsgSample() {
 		}
 		// Mixer bits: 1 = disabled, 0 = enabled. When disabled the
 		// corresponding signal is forced high so the AND of the two
-		// would let the OTHER signal through.
+		// lets the other signal through unchanged.
+		//
+		// Per the YM2149 mixer schematic the channel output is
+		//   ch = (T_n OR D_T_n) AND (N_n OR D_N_n)
+		// which means BOTH disabled → constant 1 → the channel just
+		// drives its volume DAC at full scale. Several PC-88 sound
+		// drivers (notably Ys) use this mode for their main melody:
+		// the mixer is set to "everything disabled" but the driver
+		// still rewrites the vol register at IRQ rate (and the vol
+		// register is decoded by the chip's DAC into an analog
+		// level). The audible result is the vol DAC's stair-step
+		// waveform — the melody is encoded directly in the sequence
+		// of vol writes, not in the tone counter.
+		//
+		// We previously short-circuited "both disabled" to silence
+		// here under the assumption that the constant DC was
+		// inaudible. That dropped the entire Ys SSG melody phase.
+		// Letting the standard formula run produces nOut=1 for
+		// both-disabled, the vol DAC value passes through, and the
+		// driver's vol writes become audible as designed.
 		int nToneDisable  = (m_btSsgMixer >> n)        & 1;
 		int nNoiseDisable = (m_btSsgMixer >> (n + 3))  & 1;
-		// When BOTH tone and noise are disabled the channel emits a
-		// constant DC level (vol DAC pass-through). We silence it here
-		// to avoid click/pop on scene transitions; some games rely on
-		// this being silent.
-		if (nToneDisable && nNoiseDisable) {
-			continue;
-		}
 		int nToneOut  = nToneDisable  | m_anSsgToneState[n];
 		int nNoiseOut = nNoiseDisable | m_nSsgNoiseState;
 		int nOut = nToneOut & nNoiseOut;
