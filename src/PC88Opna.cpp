@@ -582,9 +582,29 @@ void CPC88Opna::UpdateSsgTickRate() {
 void CPC88Opna::AdvanceSsgOneTick() {
 	// Tone counters: each channel toggles when its counter reaches 0.
 	for (int n = 0; n < SSG_CHANNEL_COUNT; n++) {
+		int nPeriod = m_anSsgTonePeriod[n];
+		if (nPeriod < 1) {
+			// Period == 0: real YM2149 doesn't toggle the square output
+			// in this case (the counter never reloads to a positive
+			// value, so the divider sits at "no edge"). Some sound
+			// drivers (silpheed and others) write tone period 0 as
+			// part of their initialisation or as a "DC-output trick"
+			// for software volume modulation. Real hardware filters
+			// the resulting DC level out by analog low-pass before the
+			// speaker, so it's perceptually silent.
+			//
+			// Our previous code clamped period to 1 here, which made
+			// the divider toggle every internal SSG tick (≈250 kHz at
+			// the typical PC-88 4 MHz / prescaler 4 setup). At 44.1 kHz
+			// output that ultrasonic square aliased back into the
+			// audible band as a piercing high-frequency tone. Setting
+			// state to 0 silences the channel cleanly and matches the
+			// "perceptually inaudible" behaviour of the real chip.
+			m_anSsgToneState[n]   = 0;
+			m_anSsgToneCounter[n] = 1;
+			continue;
+		}
 		if (--m_anSsgToneCounter[n] <= 0) {
-			int nPeriod = m_anSsgTonePeriod[n];
-			if (nPeriod < 1) nPeriod = 1;
 			m_anSsgToneCounter[n] = nPeriod;
 			m_anSsgToneState[n] ^= 1;
 		}
@@ -829,8 +849,9 @@ void CPC88Opna::OnSsgRegisterWrite(int nAddress, uint8_t btData) {
 	case 0x04: { // CH C tone period low
 		int nCh = nAddress >> 1;
 		int nHi = m_abtRegisters[nAddress + 1] & 0x0F;
+		// Allow period == 0 — AdvanceSsgOneTick() handles it as
+		// "no toggle / silent DC", matching real chip behaviour.
 		m_anSsgTonePeriod[nCh] = (nHi << 8) | btData;
-		if (m_anSsgTonePeriod[nCh] < 1) m_anSsgTonePeriod[nCh] = 1;
 		break;
 	}
 	case 0x01: // CH A tone period high (4 bits)
@@ -839,7 +860,6 @@ void CPC88Opna::OnSsgRegisterWrite(int nAddress, uint8_t btData) {
 		int nCh = nAddress >> 1;
 		int nLo = m_abtRegisters[nAddress - 1];
 		m_anSsgTonePeriod[nCh] = ((btData & 0x0F) << 8) | nLo;
-		if (m_anSsgTonePeriod[nCh] < 1) m_anSsgTonePeriod[nCh] = 1;
 		break;
 	}
 	case 0x06: // noise period (5 bits)
