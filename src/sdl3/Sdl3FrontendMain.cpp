@@ -1487,6 +1487,33 @@ int main(int argc, char** argv) {
 	ImGuiIO& io = ImGui::GetIO();
 	(void)io;
 	ImGui::StyleColorsDark();
+
+	// Load Noto Sans JP from the app bundle's Resources/fonts/ so that
+	// Japanese text renders correctly in ImGui menus and dialogs. Falls
+	// back to the built-in ASCII font if the file is missing.
+	{
+		const char* pBase = SDL_GetBasePath();  // .../Contents/MacOS/
+		if (pBase) {
+			std::string sFontPath = std::string(pBase)
+				+ "../Resources/fonts/NotoSansJP-Regular.ttf";
+			ImFontConfig fontCfg;
+			fontCfg.OversampleH = 2;
+			fontCfg.OversampleV = 1;
+			ImFont* pFont = io.Fonts->AddFontFromFileTTF(
+				sFontPath.c_str(), 20.0f, &fontCfg,
+				io.Fonts->GetGlyphRangesJapanese());
+			if (!pFont) {
+				fprintf(stderr,
+					"[warn] failed to load %s — falling back to "
+					"built-in font (no Japanese glyphs)\n",
+					sFontPath.c_str());
+				io.Fonts->AddFontDefault();
+			}
+		} else {
+			io.Fonts->AddFontDefault();
+		}
+	}
+
 	ImGui_ImplSDL3_InitForSDLRenderer(pWindow, pRenderer);
 	ImGui_ImplSDLRenderer3_Init(pRenderer);
 #endif
