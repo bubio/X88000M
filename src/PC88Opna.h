@@ -54,9 +54,13 @@ public:
 		FM_EXP_TABLE_SIZE = 256,
 		// Envelope rate table covers all valid effective rate values.
 		FM_ENV_RATE_TABLE_SIZE = 64,
-		// Detune table: 4 KC range × 32 KC value × 8 DT values.
-		FM_DT_KC_RANGES   = 4,
-		FM_DT_KC_VALUES   = 32
+		// Detune table dimensions, matching the YM2608 application
+		// manual Table 2-6: indexed by (BLOCK, NOTE, FD) where NOTE
+		// is the 2-bit (N4,N3) derived from F-Number top bits and FD
+		// is the 2-bit detune magnitude (sign handled separately).
+		FM_DT_BLOCKS = 8,
+		FM_DT_NOTES  = 4,
+		FM_DT_FDS    = 4
 	};
 	// FM envelope generator state values
 	enum {
@@ -131,6 +135,12 @@ protected:
 	// Per-section mute (Debug menu — Generate() still updates state).
 	static bool m_bFmMute;
 	static bool m_bSsgMute;
+	// Per-channel mute (Debug menu). Indexed by 0..2.
+	// State is still advanced — only the contribution to the output
+	// sample is suppressed, so timers / envelopes / phase accumulators
+	// stay coherent across mute toggles.
+	static bool m_abFmChMute[FM_CHANNEL_COUNT];
+	static bool m_abSsgChMute[SSG_CHANNEL_COUNT];
 
 	// ----- SSG (PSG) synthesis state (Phase C-SSG) -----
 	// SSG internal counters advance at base_clock / prescaler_psg / 4,
@@ -192,6 +202,17 @@ protected:
 		uint8_t  btMul;            // 0..15
 		uint8_t  btDt;             // 0..7 (3-bit signed-magnitude detune)
 		bool     bKeyOn;
+		// SSG-type Envelope Control ($90-$9E, manual section 2-5-2).
+		// btSsgEg holds the low nibble of $90:
+		//   bit 3 = enable (1 = SSG-EG mode active)
+		//   bit 2 = Attack (Att) — start direction
+		//   bit 1 = Alternate (Alt)
+		//   bit 0 = Hold
+		// bSsgEgInverted is the runtime "envelope is being read in
+		// inverted polarity" flag, toggled at envelope boundaries
+		// when the shape demands a triangle/up-saw / hold-at-peak.
+		uint8_t  btSsgEg;
+		bool     bSsgEgInverted;
 		// Most recent linear sample output, used by ALGO 0..6 for the
 		// "previous operator output" modulation chain and by OP1 self-
 		// feedback in all algorithms.
@@ -260,7 +281,12 @@ protected:
 	static int m_anFmSinTable[FM_SIN_TABLE_SIZE];      // 1/4 period, log domain
 	static int m_anFmExpTable[FM_EXP_TABLE_SIZE];      // log → linear conversion
 	static int m_anFmEnvRateTable[FM_ENV_RATE_TABLE_SIZE]; // rate → counter inc per sample
-	static int m_anFmDetuneTable[FM_DT_KC_RANGES][FM_DT_KC_VALUES]; // KC × DT offset
+	// Detune phase increment lookup, populated by UpdateFmTickRate
+	// from a milli-Hz constant table (Table 2-6 of the YM2608
+	// application manual). Indexed by [BLOCK][NOTE][FD] and stored as
+	// a per-output-sample phase increment offset (positive; sign is
+	// applied at runtime from the DT field's bit 2).
+	static int m_anFmDetunePhaseInc[FM_DT_BLOCKS][FM_DT_NOTES][FM_DT_FDS];
 
 public:
 	// get base clock
@@ -313,6 +339,21 @@ public:
 	static void SetSsgMute(bool bMute) { m_bSsgMute = bMute; }
 	static bool GetFmMute()  { return m_bFmMute; }
 	static bool GetSsgMute() { return m_bSsgMute; }
+	// Per-channel mute (Debug menu). Index 0..2 for FM ch 1..3 / SSG ch A..C.
+	static void SetFmChMute(int nCh, bool bMute) {
+		if ((nCh >= 0) && (nCh < FM_CHANNEL_COUNT)) m_abFmChMute[nCh] = bMute;
+	}
+	static bool GetFmChMute(int nCh) {
+		if ((nCh < 0) || (nCh >= FM_CHANNEL_COUNT)) return false;
+		return m_abFmChMute[nCh];
+	}
+	static void SetSsgChMute(int nCh, bool bMute) {
+		if ((nCh >= 0) && (nCh < SSG_CHANNEL_COUNT)) m_abSsgChMute[nCh] = bMute;
+	}
+	static bool GetSsgChMute(int nCh) {
+		if ((nCh < 0) || (nCh >= SSG_CHANNEL_COUNT)) return false;
+		return m_abSsgChMute[nCh];
+	}
 
 // create & destroy
 public:
@@ -420,6 +461,13 @@ protected:
 	// nKsr is the precomputed key-scaling rate offset (0..3) for this
 	// operator's current channel pitch.
 	static void AdvanceFmEnvelope(SFmOperator& op, int nKsr);
+	// SSG-EG endpoint handler. Called by AdvanceFmEnvelope when an
+	// operator's env_level reaches 1023 (silent end) while running
+	// the SUSTAIN phase. If SSG-EG is enabled on this operator, the
+	// shape's loop / alternate / hold rules are applied and `true`
+	// is returned (caller must skip the normal "transition to OFF"
+	// path). Returns `false` if SSG-EG is not enabled.
+	static bool ApplySsgEgEndpoint(SFmOperator& op);
 	// Compute the key-scale rate offset for a channel.
 	static int ComputeFmKsr(int nChannel, int nOpIndex);
 	// Render one channel's mono sample, including all 8 algorithms

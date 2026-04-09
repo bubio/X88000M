@@ -113,6 +113,8 @@ int CPC88Opna::m_nSampleAccumX256;
 CPC88Opna::SampleOutputCallback CPC88Opna::m_pSampleOutputCallback;
 bool CPC88Opna::m_bFmMute  = false;
 bool CPC88Opna::m_bSsgMute = false;
+bool CPC88Opna::m_abFmChMute[CPC88Opna::FM_CHANNEL_COUNT]   = { false, false, false };
+bool CPC88Opna::m_abSsgChMute[CPC88Opna::SSG_CHANNEL_COUNT] = { false, false, false };
 
 // ----- SSG (PSG) state -----
 
@@ -154,7 +156,48 @@ int g_nOpnTotalWrites = 0;
 int                   CPC88Opna::m_anFmSinTable[CPC88Opna::FM_SIN_TABLE_SIZE];
 int                   CPC88Opna::m_anFmExpTable[CPC88Opna::FM_EXP_TABLE_SIZE];
 int                   CPC88Opna::m_anFmEnvRateTable[CPC88Opna::FM_ENV_RATE_TABLE_SIZE];
-int                   CPC88Opna::m_anFmDetuneTable[CPC88Opna::FM_DT_KC_RANGES][CPC88Opna::FM_DT_KC_VALUES];
+int                   CPC88Opna::m_anFmDetunePhaseInc[CPC88Opna::FM_DT_BLOCKS][CPC88Opna::FM_DT_NOTES][CPC88Opna::FM_DT_FDS];
+
+// Detune amounts in milli-Hz at master clock = 8 MHz, transcribed
+// from Table 2-6 of the YM2608 application manual. The arrows ("↑")
+// in the printed table mean "same value as the cell directly above";
+// they are flattened here. Indexed by [BLOCK 0..7][NOTE 0..3][FD 0..3].
+// FD=0 column is always zero (no detune). The DT register field's
+// bit 2 (sign) is applied separately at runtime.
+//
+// At runtime UpdateFmTickRate() converts these milli-Hz values into
+// per-output-sample phase increment offsets, scaling for the active
+// master clock and sample rate. (At master clocks other than 8 MHz
+// the chip's phase generator produces correspondingly different Hz
+// offsets, so the manual values must be scaled by master/8e6.)
+static const short s_anFmDetuneMilliHz[CPC88Opna::FM_DT_BLOCKS]
+                                       [CPC88Opna::FM_DT_NOTES]
+                                       [CPC88Opna::FM_DT_FDS] = {
+	// BLOCK 0
+	{ {0,   0,  53, 106},  {0,   0,  53, 106},
+	  {0,   0,  53, 106},  {0,   0,  53, 106} },
+	// BLOCK 1
+	{ {0,  53, 106, 106},  {0,  53, 106, 159},
+	  {0,  53, 106, 159},  {0,  53, 106, 159} },
+	// BLOCK 2
+	{ {0,  53, 106, 212},  {0,  53, 159, 212},
+	  {0,  53, 159, 212},  {0,  53, 159, 264} },
+	// BLOCK 3
+	{ {0, 106, 212, 264},  {0, 106, 212, 317},
+	  {0, 106, 212, 317},  {0, 106, 264, 370} },
+	// BLOCK 4
+	{ {0, 106, 264, 423},  {0, 159, 317, 423},
+	  {0, 159, 317, 476},  {0, 159, 370, 529} },
+	// BLOCK 5
+	{ {0, 212, 423, 582},  {0, 212, 423, 635},
+	  {0, 212, 476, 688},  {0, 264, 529, 741} },
+	// BLOCK 6
+	{ {0, 264, 582, 846},  {0, 317, 635, 899},
+	  {0, 317, 688,1005},  {0, 370, 741,1058} },
+	// BLOCK 7
+	{ {0, 423, 846,1164},  {0, 423, 846,1164},
+	  {0, 423, 846,1164},  {0, 423, 846,1164} },
+};
 
 ////////////////////////////////////////////////////////////
 // create & destroy
@@ -604,6 +647,11 @@ void CPC88Opna::AdvanceSsgOneTick() {
 int CPC88Opna::RenderSsgSample() {
 	int nMix = 0;
 	for (int n = 0; n < SSG_CHANNEL_COUNT; n++) {
+		// Per-channel mute (Debug menu). Skip the contribution but
+		// keep the loop running so any subsequent state stays consistent.
+		if (m_abSsgChMute[n]) {
+			continue;
+		}
 		// Mixer bits: 1 = disabled, 0 = enabled. When disabled the
 		// corresponding signal is forced high so the AND of the two
 		// would let the OTHER signal through.
@@ -755,13 +803,20 @@ void CPC88Opna::BuildFmTables() {
 
 	// Exp table: 2^(-x/256) for fractional log-domain attenuation.
 	// Used to convert log-domain values back to linear amplitude.
-	// Per-operator peak amplitude is 4096 — chosen so that the worst
-	// case (3 channels × 2 carriers in ALGO 4 = 6 ops at max) gives
-	// 6 × 4096 = 24576, fitting int16 alongside SSG output.
+	//
+	// Per-operator peak amplitude is 8192 (~14-bit signed), matching
+	// the standard YM2151/YM2203 op output range. Pre-2026 the peak
+	// was 4096 (~13-bit), but that gave half the modulation depth of
+	// the chip and made FM patches sound thin / under-modulated. To
+	// keep the final mix in int16 range despite the larger per-op
+	// output, RenderFmSample() right-shifts the mixed FM signal by 1
+	// before returning. The shift happens AFTER the modulation feed-
+	// forward path, so modulators still drive carriers at the full
+	// ±8192 amplitude (= correct modulation index for typical patches).
 	for (int n = 0; n < FM_EXP_TABLE_SIZE; n++) {
 		double dFrac = (double)n / (double)FM_EXP_TABLE_SIZE;
 		double dExp = pow(2.0, -dFrac);
-		m_anFmExpTable[n] = (int)(dExp * 4096.0 + 0.5);
+		m_anFmExpTable[n] = (int)(dExp * 8192.0 + 0.5);
 	}
 
 	// Envelope rate table: rate 0..63 → average counter increment per
@@ -790,17 +845,14 @@ void CPC88Opna::BuildFmTables() {
 		}
 	}
 
-	// Detune table: simple monotonic approximation of the YM2203 DT
-	// (DeTune) feature. Real hardware uses a small lookup table that
-	// gives ±0..16 phase increments per key-code. We approximate it
-	// as DT_strength × (1 + KC/8), which produces a similar gentle
-	// "chorus" effect without copying the chip's literal table values.
-	// Phase C-FM-3 uses this; Phase C-FM-4 may refine if needed.
-	for (int r = 0; r < FM_DT_KC_RANGES; r++) {
-		for (int v = 0; v < FM_DT_KC_VALUES; v++) {
-			// r = DT strength index 0..3 (0 = no detune)
-			// v = key code 0..31
-			m_anFmDetuneTable[r][v] = r * (1 + (v >> 3));
+	// Detune table values are derived from s_anFmDetuneMilliHz[][][]
+	// in UpdateFmTickRate() because they depend on the current master
+	// clock and sample rate. Just clear the runtime table here.
+	for (int b = 0; b < FM_DT_BLOCKS; b++) {
+		for (int n = 0; n < FM_DT_NOTES; n++) {
+			for (int f = 0; f < FM_DT_FDS; f++) {
+				m_anFmDetunePhaseInc[b][n][f] = 0;
+			}
 		}
 	}
 }
@@ -837,6 +889,8 @@ void CPC88Opna::ResetFmState() {
 			op.btMul      = 0;
 			op.btDt       = 0;
 			op.bKeyOn     = false;
+			op.btSsgEg    = 0;
+			op.bSsgEgInverted = false;
 			op.nOutPrev   = 0;
 		}
 	}
@@ -875,6 +929,37 @@ void CPC88Opna::UpdateFmTickRate() {
 	} else {
 		m_nFmPhaseScaleX16 = 0;
 	}
+
+	// Re-derive the detune phase increment table. The manual's Hz
+	// values were measured at master clock = 8 MHz; at any other clock
+	// the chip's phase generator produces proportionally different Hz
+	// offsets. Convert each entry to the same 16.16 nIncX16 units used
+	// by RecomputeFmOperatorPhaseInc.
+	//
+	//   freq_Hz                  = milliHz * (master / 8e6) / 1000
+	//   phase_inc_per_sample     = freq_Hz * (1 << 20) / sample_rate
+	//   phase_inc_per_sample_x16 = phase_inc_per_sample * (1 << 16)
+	//
+	// To stay inside int64 we factor master/8MHz as a 16.16 ratio:
+	long long nMasterRatioX16 = (nMaster << 16) / 8000000LL;  // 65536 @ 8 MHz
+	for (int b = 0; b < FM_DT_BLOCKS; b++) {
+		for (int n = 0; n < FM_DT_NOTES; n++) {
+			for (int f = 0; f < FM_DT_FDS; f++) {
+				long long nMHz = (long long)s_anFmDetuneMilliHz[b][n][f];
+				if (nMHz == 0) {
+					m_anFmDetunePhaseInc[b][n][f] = 0;
+					continue;
+				}
+				// nResult = milliHz * master_ratio_x16 * 2^20
+				//             / (1000 * sample_rate)
+				// bits: 11 + 17 + 20 = 48 → safe in int64.
+				long long nNum = nMHz * nMasterRatioX16;
+				nNum <<= 20;
+				long long nDen = 1000LL * (long long)m_nSampleRate;
+				m_anFmDetunePhaseInc[b][n][f] = (int)(nNum / nDen);
+			}
+		}
+	}
 }
 
 // recompute one operator's phase increment from its channel's F-Number,
@@ -908,19 +993,28 @@ void CPC88Opna::RecomputeFmOperatorPhaseInc(int nChannel, int nOpIndex) {
 	} else {
 		nIncX16 *= (long long)nMul;
 	}
-	// Apply DT (detune). The 3-bit DT field is split into a strength
-	// index (low 2 bits) and a sign (bit 2). DT 0/4 means "no detune".
-	// We add (rather than multiply) the detune offset so that the
-	// effect is largest for high notes (KC range 3) and smallest for
-	// low notes (KC range 0).
-	int nDtStrength = op.btDt & 0x03;
-	bool bDtNeg     = (op.btDt & 0x04) != 0;
-	if (nDtStrength != 0) {
-		int nKc = ((int)btBlock << 2) | ((int)wFnum >> 9);  // 0..31 approx
-		if (nKc < 0)  nKc = 0;
-		if (nKc > 31) nKc = 31;
-		long long nDtOfs = (long long)m_anFmDetuneTable[nDtStrength][nKc]
-		                  * (long long)m_nFmPhaseScaleX16;
+	// Apply DT (detune). The 3-bit DT field is bit 2 = sign and bits
+	// 1..0 = magnitude (FD 0..3). FD=0 (and DT=4 = sign-only) mean
+	// "no detune". The detune amount is looked up from
+	// m_anFmDetunePhaseInc, which UpdateFmTickRate() pre-computes
+	// from the YM2608 application manual's Hz table (Table 2-6).
+	// Index by (BLOCK, NOTE) using the same N4/N3 derivation as the
+	// KSR computation.
+	int nFd      = op.btDt & 0x03;
+	bool bDtNeg  = (op.btDt & 0x04) != 0;
+	if (nFd != 0) {
+		int nF11 = (wFnum >> 10) & 1;
+		int nF10 = (wFnum >>  9) & 1;
+		int nF9  = (wFnum >>  8) & 1;
+		int nF8  = (wFnum >>  7) & 1;
+		int nN4  = nF11;
+		int nN3  = nF11? (nF10 | nF9 | nF8): (nF10 & nF9 & nF8);
+		int nNote = (nN4 << 1) | nN3;
+		int nBlk  = (int)btBlock;
+		if (nBlk < 0) nBlk = 0;
+		if (nBlk > 7) nBlk = 7;
+		// Stored value is already in the 16.16 nIncX16 unit system.
+		long long nDtOfs = (long long)m_anFmDetunePhaseInc[nBlk][nNote][nFd];
 		if (bDtNeg) nDtOfs = -nDtOfs;
 		nIncX16 += nDtOfs;
 	}
@@ -1035,7 +1129,11 @@ void CPC88Opna::OnFmRegisterWrite(int nAddress, uint8_t btData) {
 			op.btSl = (btData >> 4) & 0x0F;
 			op.btRr = btData & 0x0F;
 			break;
-		case 0x90:  // SSG-EG (5 bit) — not implemented in this phase
+		case 0x90:  // SSG-type Envelope Control ($90-$9E)
+			// Manual section 2-5-2: bit 3 = enable, bits 2..0 =
+			// Att/Alt/Hold shape selectors (same semantics as the
+			// SSG envelope generator's $0D shape register).
+			op.btSsgEg = btData & 0x0F;
 			break;
 		}
 		return;
@@ -1114,8 +1212,27 @@ void CPC88Opna::OnFmKeyOnOff(uint8_t btData) {
 			// Don't reset env_level — letting it ramp from its
 			// current attenuation produces less "click" than jumping
 			// straight to 1023.
+			// SSG-EG: initial inversion comes from the Att (bit 2)
+			// of the shape, but only when SSG-EG is enabled (bit 3).
+			if (op.btSsgEg & 0x08) {
+				op.bSsgEgInverted = (op.btSsgEg & 0x04) != 0;
+			} else {
+				op.bSsgEgInverted = false;
+			}
 		} else if (!bKey && op.bKeyOn) {
 			op.bKeyOn = false;
+			// If SSG-EG was running with the envelope inverted,
+			// "freeze" the apparent level into the real env_level
+			// so that the standard RELEASE rate then attenuates it
+			// from where the listener last heard it (rather than
+			// from env_level=1023, which under inversion would mean
+			// "still loud" and a release that does nothing audible).
+			if ((op.btSsgEg & 0x08) && op.bSsgEgInverted) {
+				op.nEnvLevel = 1023 - op.nEnvLevel;
+				if (op.nEnvLevel < 0)    op.nEnvLevel = 0;
+				if (op.nEnvLevel > 1023) op.nEnvLevel = 1023;
+				op.bSsgEgInverted = false;
+			}
 			op.nEnvState = FM_ENV_RELEASE;
 		}
 	}
@@ -1140,11 +1257,30 @@ int CPC88Opna::ComputeFmKsr(int nChannel, int nOpIndex) {
 		wFnum   = ch.wFnum;
 		btBlock = ch.btBlock;
 	}
-	// Standard YM family KSR: ((BLOCK << 1) | top bit of FNUM) >> (3-KS)
-	int nNote = (btBlock << 1) | ((wFnum >> 10) & 1);
+	// Per the YM2608 application manual (Table 2-8):
+	//   KC[4:0]   = (BLOCK << 2) | (N4 << 1) | N3
+	//   N4        = F11
+	//   N3        = F11·(F10+F9+F8) + !F11·F10·F9·F8
+	//   Rks       = KC >> (3 - KS)
+	// (Earlier we used the incorrect "(BLOCK<<1) | top bit" form which
+	// produced half the spec rate scaling — high notes decayed too slowly
+	// and the KS=3 maximum range was 0..15 instead of 0..31.)
+	int nF11 = (wFnum >> 10) & 1;
+	int nF10 = (wFnum >>  9) & 1;
+	int nF9  = (wFnum >>  8) & 1;
+	int nF8  = (wFnum >>  7) & 1;
+	int nN4  = nF11;
+	int nN3;
+	if (nF11) {
+		nN3 = nF10 | nF9 | nF8;
+	} else {
+		nN3 = nF10 & nF9 & nF8;
+	}
+	int nNote = (nN4 << 1) | nN3;
+	int nKc   = ((int)btBlock << 2) | nNote;  // 0..31
 	int nShift = 3 - op.btKs;
 	if (nShift < 0) nShift = 0;
-	return nNote >> nShift;
+	return nKc >> nShift;
 }
 
 // advance an operator's envelope state machine by one output sample
@@ -1187,14 +1323,16 @@ void CPC88Opna::AdvanceFmEnvelope(SFmOperator& op, int nKsr) {
 		while (op.nEnvCounter >= (1 << 16)) {
 			op.nEnvCounter -= (1 << 16);
 			op.nEnvLevel++;
-			// Sustain level: SL is 4-bit and each step is 6 dB of
-			// attenuation per the YM2203 spec. Our envelope unit is
-			// 96 dB / 1024 ≈ 0.094 dB, so 1 SL step = 64 env units.
-			// SL=15 is the special case "fully attenuated" (= 1023).
-			// (Earlier this used SL*32 which was half the proper
-			// attenuation, causing decay → sustain to fire too early
-			// and the sustained note to sit too loud.)
-			int nSlThreshold = (op.btSl == 0x0F)? 1023: (op.btSl * 64);
+			// Sustain level: per the YM2608 application manual
+			// (Table 2-7), SL bits D7..D4 carry weights 24/12/6/3 dB,
+			// i.e. 1 SL step = 3 dB. Our envelope unit is 96 dB / 1024
+			// ≈ 0.094 dB, so 1 SL step = 32 env units. SL=15 (all
+			// bits set) is a hardware special case that jumps from
+			// 42 dB to 93 dB (≈ 992 env units, ~"fully attenuated").
+			// (Earlier this code used SL*64 — wrongly assuming a 6 dB
+			// step — which made decay overshoot to half the intended
+			// sustain level.)
+			int nSlThreshold = (op.btSl == 0x0F)? 992: (op.btSl * 32);
 			if (op.nEnvLevel >= nSlThreshold) {
 				op.nEnvState = FM_ENV_SUSTAIN;
 				return;
@@ -1216,18 +1354,27 @@ void CPC88Opna::AdvanceFmEnvelope(SFmOperator& op, int nKsr) {
 			op.nEnvLevel++;
 			if (op.nEnvLevel >= 1023) {
 				op.nEnvLevel = 1023;
+				// SSG-EG: at the silent endpoint of the natural
+				// envelope flow, the operator may loop / alternate /
+				// hold per the shape register. If SSG-EG is not
+				// enabled the operator falls through to OFF as
+				// usual.
+				if (ApplySsgEgEndpoint(op)) return;
 				op.nEnvState = FM_ENV_OFF;
 				return;
 			}
 		}
 		break;
 	case FM_ENV_RELEASE:
-		// YM2151 release rate: (2*RR + 1) + KSR.
-		// The "+1" lets RR=0 still produce a (very slow) release.
-		// Earlier versions of this code had an extra "* 2" multiplier
-		// here, which made every release 4× too fast and turned
-		// piano/bass patches into short percussive "ton/don" sounds.
-		nRate = (op.btRr << 1) + 1 + nKsr;
+		// Per the YM2608 application manual (page 30):
+		//   Rate = 2R + Rks
+		//   where R = 2*RR + 1 (RR is the 4-bit register field)
+		//   ⇒ Rate = 4*RR + 2 + Rks
+		// The "+2" guarantees RR=0 still produces a (very slow) release
+		// rather than a true hold. Earlier code used (RR<<1)+1+Rks
+		// which gave half the spec rate, making piano releases ~2×
+		// longer than the target hardware.
+		nRate = (op.btRr << 2) + 2 + nKsr;
 		if (nRate > 63) nRate = 63;
 		if (nRate < 2) return;
 		op.nEnvCounter += m_anFmEnvRateTable[nRate];
@@ -1246,6 +1393,42 @@ void CPC88Opna::AdvanceFmEnvelope(SFmOperator& op, int nKsr) {
 		op.nEnvLevel = 1023;
 		break;
 	}
+}
+
+// SSG-EG endpoint handler — see header for full description.
+
+bool CPC88Opna::ApplySsgEgEndpoint(SFmOperator& op) {
+	if ((op.btSsgEg & 0x08) == 0) {
+		return false;  // SSG-EG not enabled — caller falls through
+	}
+	bool bAlt  = (op.btSsgEg & 0x02) != 0;
+	bool bHold = (op.btSsgEg & 0x01) != 0;
+	if (bHold) {
+		// Hold at this end. With Alt set the inversion is flipped
+		// once before the freeze, so shapes 3 / 5 finish at "loud"
+		// (env_level = 1023 read inverted = 0 effective) and shapes
+		// 1 / 7 finish at "silent" (env_level = 1023 read straight).
+		if (bAlt) {
+			op.bSsgEgInverted = !op.bSsgEgInverted;
+		}
+		op.nEnvLevel = 1023;
+		op.nEnvState = FM_ENV_OFF;
+	} else {
+		// Loop: optionally toggle inversion (triangle), then restart
+		// the envelope at env_level = 0. Sawtooth shapes (Alt=0) just
+		// reset; triangle shapes (Alt=1) toggle inversion so the next
+		// pass appears to swing in the opposite direction.
+		if (bAlt) {
+			op.bSsgEgInverted = !op.bSsgEgInverted;
+		}
+		op.nEnvLevel   = 0;
+		op.nEnvCounter = 0;
+		// Skip ATTACK on restart (real chip has AR fixed at 1F under
+		// SSG-EG = instant attack). Going straight to DECAY lets DR
+		// drive the next "decay" segment immediately.
+		op.nEnvState = FM_ENV_DECAY;
+	}
+	return true;
 }
 
 // compute one operator's output sample (with optional modulation)
@@ -1267,13 +1450,27 @@ int CPC88Opna::RenderFmOperator(SFmOperator& op, int nModulation) {
 
 	int nSinLog = m_anFmSinTable[nQuad];
 
-	// Combined attenuation in 1/256-octave units:
-	//   sin_log    : 0..~1900 (function of phase)
-	//   env << 2   : 0..4092  (function of envelope)
-	//   tl  << 5   : 0..4064  (function of total level register)
-	int nTotalAtten = nSinLog + (op.nEnvLevel << 2) + ((int)op.btTl << 5);
-	if (nTotalAtten >= (12 << 8)) {
-		// > 12 octaves down (~72 dB) — effectively silent.
+	// SSG-EG: when the shape is being read in inverted polarity, the
+	// effective envelope value is mirrored around the silent endpoint
+	// (1023 - env). This makes the same env state machine drive both
+	// "down" and "up" segments of triangle/sawtooth-up shapes.
+	int nEffEnv = (op.btSsgEg & 0x08) && op.bSsgEgInverted
+	            ? (1023 - op.nEnvLevel)
+	            : op.nEnvLevel;
+	if (nEffEnv < 0)    nEffEnv = 0;
+	if (nEffEnv > 1023) nEffEnv = 1023;
+
+	// Combined attenuation in 1/256-octave units (1 unit ≈ 0.0234 dB):
+	//   sin_log    : 0..~2138 (function of phase, log domain)
+	//   env << 2   : 0..4092  (function of envelope, 0.094 dB/step)
+	//   tl  << 5   : 0..4064  (function of total level, 0.75 dB/step)
+	// Peak op output = exp[0] = 8192 (when sin/env/tl all 0).
+	int nTotalAtten = nSinLog + (nEffEnv << 2) + ((int)op.btTl << 5);
+	if (nTotalAtten >= (13 << 8)) {
+		// > 13 octaves down (~78 dB) — effectively silent. The exp
+		// table peak of 8192 supports useful values down to ~13
+		// octaves of right-shift; beyond that nLinear becomes 0
+		// anyway, so cutting off here is just a perf optimization.
 		return 0;
 	}
 
@@ -1290,13 +1487,36 @@ int CPC88Opna::RenderFmOperator(SFmOperator& op, int nModulation) {
 // produce one mono FM sample by mixing all 3 channels
 
 int CPC88Opna::RenderFmSample() {
+	int anChOut[FM_CHANNEL_COUNT] = { 0, 0, 0 };
 	int nMix = 0;
 	for (int nCh = 0; nCh < FM_CHANNEL_COUNT; nCh++) {
-		nMix += RenderFmChannel(nCh);
+		// Always run RenderFmChannel so envelopes / phase / state stay
+		// coherent across mute toggles. Suppress only the contribution
+		// to the mix when this channel is muted.
+		// RenderFmChannel returns the channel's per-sample mono output
+		// at full operator amplitude (peak ≈ ±8192 per op since the
+		// 14-bit op output extension). Modulation feed-forward inside
+		// RenderFmChannel uses the full amplitude — only the FINAL
+		// mix value is right-shifted below to keep the section's int16
+		// output in range without halving the per-op modulation index.
+		anChOut[nCh] = RenderFmChannel(nCh);
+		if (!m_abFmChMute[nCh]) {
+			nMix += anChOut[nCh];
+		}
 	}
-	// DEBUG: emit a status line every ~1 second to stderr if
-	// X88_FM_DEBUG=1 is set. Reports per-channel envelope state and
-	// level so we can see whether FM ops are progressing past silence.
+	// Halve the FM section's contribution to compensate for the doubled
+	// per-op output amplitude (4096 → 8192). The shift here, not inside
+	// the channel render path, preserves the original modulation index
+	// for the modulator chain while keeping the final mix at the same
+	// dynamic range as before the 14-bit extension.
+	nMix >>= 1;
+	// DEBUG: comprehensive status dump emitted to stderr every 0.25 sec
+	// when X88_FM_DEBUG=1. Output covers every parameter that the FM
+	// renderer reads — algorithm, feedback, F-Number/Block, and per-op
+	// (KeyOn, AR/DR/SR/RR/SL/KS/MUL/DT/TL, SSG-EG, env state/level,
+	// inversion flag) — plus per-channel mute and contribution to the
+	// final mix. The intent is "dump everything you'd need to reproduce
+	// the same audio in another emulator".
 	{
 		static int s_check = -1;
 		static bool s_enabled = false;
@@ -1312,65 +1532,85 @@ int CPC88Opna::RenderFmSample() {
 			static int s_minSample = 0;
 			static int s_maxSample = 0;
 			static long long s_sumAbs = 0;
+			static long long s_sumAbsCh[FM_CHANNEL_COUNT] = { 0, 0, 0 };
+			static int s_minCh[FM_CHANNEL_COUNT] = { 0, 0, 0 };
+			static int s_maxCh[FM_CHANNEL_COUNT] = { 0, 0, 0 };
 			s_sampleCount++;
 			if (nMix != 0) s_nonZeroCount++;
 			if (nMix < s_minSample) s_minSample = nMix;
 			if (nMix > s_maxSample) s_maxSample = nMix;
 			s_sumAbs += (nMix < 0)? -nMix: nMix;
-			// Report every 0.25 sec so a short capture catches the
-			// state right after FM register init.
+			for (int c = 0; c < FM_CHANNEL_COUNT; c++) {
+				int v = anChOut[c];
+				s_sumAbsCh[c] += (v < 0)? -v: v;
+				if (v < s_minCh[c]) s_minCh[c] = v;
+				if (v > s_maxCh[c]) s_maxCh[c] = v;
+			}
 			if (s_sampleCount - s_lastReport >= 11025) {
 				int nReportFrames = s_sampleCount - s_lastReport;
 				int nMeanAbs = (int)(s_sumAbs / nReportFrames);
 				s_lastReport = s_sampleCount;
 				extern int g_nFmTotalWrites;
 				extern int g_nOpnTotalWrites;
-				const SFmChannel& ch0 = m_aFmCh[0];
-				const SFmChannel& ch1 = m_aFmCh[1];
-				const SFmChannel& ch2 = m_aFmCh[2];
 				fprintf(stderr,
-					"[FM-mix] s=%d nz=%d min=%d max=%d meanAbs=%d  opn=%d fm=%d\n"
-					"  SSG mix=%02X vol=[%d%c %d%c %d%c] tone=[%d %d %d] np=%d ep=%d sh=%X envL=%d\n"
-					"  ch0={A=%d FB=%d tl=[%d %d %d %d] L=[%d %d %d %d] s=[%d %d %d %d]}\n"
-					"  ch1={A=%d FB=%d tl=[%d %d %d %d] L=[%d %d %d %d] s=[%d %d %d %d]}\n"
-					"  ch2={A=%d FB=%d tl=[%d %d %d %d] L=[%d %d %d %d] s=[%d %d %d %d]}\n",
-					s_sampleCount, s_nonZeroCount,
-					s_minSample, s_maxSample, nMeanAbs,
+					"\n========== [FM dump @ s=%d (~%.2fs)] ==========\n"
+					"writes: opn_total=%d fm_total=%d  mix: nz=%d min=%d max=%d meanAbs=%d\n"
+					"section mute: FM=%c SSG=%c\n"
+					"SSG: mix=$%02X vol=[A:%d%c B:%d%c C:%d%c] tone=[%d %d %d] np=%d ep=%d sh=$%X envL=%d  chMute=[%c%c%c]\n",
+					s_sampleCount, (double)s_sampleCount / 44100.0,
 					g_nOpnTotalWrites, g_nFmTotalWrites,
+					s_nonZeroCount, s_minSample, s_maxSample, nMeanAbs,
+					m_bFmMute? 'M': '.', m_bSsgMute? 'M': '.',
 					m_btSsgMixer,
 					m_anSsgVolume[0], m_abSsgUseEnv[0]? 'E': '.',
 					m_anSsgVolume[1], m_abSsgUseEnv[1]? 'E': '.',
 					m_anSsgVolume[2], m_abSsgUseEnv[2]? 'E': '.',
 					m_anSsgTonePeriod[0], m_anSsgTonePeriod[1], m_anSsgTonePeriod[2],
 					m_nSsgNoisePeriod, m_nSsgEnvPeriod,
-					m_abtRegisters[0x0D] & 0x0F,
-					m_nSsgEnvLevel,
-					ch0.btAlgo, ch0.btFb,
-					ch0.aOp[0].btTl, ch0.aOp[1].btTl,
-					ch0.aOp[2].btTl, ch0.aOp[3].btTl,
-					ch0.aOp[0].nEnvLevel, ch0.aOp[1].nEnvLevel,
-					ch0.aOp[2].nEnvLevel, ch0.aOp[3].nEnvLevel,
-					ch0.aOp[0].nEnvState, ch0.aOp[1].nEnvState,
-					ch0.aOp[2].nEnvState, ch0.aOp[3].nEnvState,
-					ch1.btAlgo, ch1.btFb,
-					ch1.aOp[0].btTl, ch1.aOp[1].btTl,
-					ch1.aOp[2].btTl, ch1.aOp[3].btTl,
-					ch1.aOp[0].nEnvLevel, ch1.aOp[1].nEnvLevel,
-					ch1.aOp[2].nEnvLevel, ch1.aOp[3].nEnvLevel,
-					ch1.aOp[0].nEnvState, ch1.aOp[1].nEnvState,
-					ch1.aOp[2].nEnvState, ch1.aOp[3].nEnvState,
-					ch2.btAlgo, ch2.btFb,
-					ch2.aOp[0].btTl, ch2.aOp[1].btTl,
-					ch2.aOp[2].btTl, ch2.aOp[3].btTl,
-					ch2.aOp[0].nEnvLevel, ch2.aOp[1].nEnvLevel,
-					ch2.aOp[2].nEnvLevel, ch2.aOp[3].nEnvLevel,
-					ch2.aOp[0].nEnvState, ch2.aOp[1].nEnvState,
-					ch2.aOp[2].nEnvState, ch2.aOp[3].nEnvState);
+					m_abtRegisters[0x0D] & 0x0F, m_nSsgEnvLevel,
+					m_abSsgChMute[0]? 'M': '.',
+					m_abSsgChMute[1]? 'M': '.',
+					m_abSsgChMute[2]? 'M': '.');
+				static const char* kStateStr[5] = {
+					"OFF", "ATK", "DEC", "SUS", "REL"
+				};
+				for (int c = 0; c < FM_CHANNEL_COUNT; c++) {
+					const SFmChannel& ch = m_aFmCh[c];
+					int nMeanCh = (int)(s_sumAbsCh[c] / nReportFrames);
+					fprintf(stderr,
+						"FM ch%d %s ALGO=%d FB=%d FNum=%4d Blk=%d "
+						"contrib: min=%d max=%d meanAbs=%d\n",
+						c + 1,
+						m_abFmChMute[c]? "[MUTE]": "      ",
+						ch.btAlgo, ch.btFb,
+						ch.wFnum, ch.btBlock,
+						s_minCh[c], s_maxCh[c], nMeanCh);
+					for (int o = 0; o < FM_OP_PER_CHANNEL; o++) {
+						const SFmOperator& op = ch.aOp[o];
+						int nState = op.nEnvState;
+						if (nState < 0 || nState > 4) nState = 0;
+						fprintf(stderr,
+							"  OP%d %s TL=%3d AR=%2d DR=%2d SR=%2d RR=%2d SL=%2d "
+							"KS=%d MUL=%2d DT=%d  ssgEG=%X%s  env=%4d %s\n",
+							o + 1,
+							op.bKeyOn? "ON ": "off",
+							op.btTl, op.btAr, op.btDr, op.btSr, op.btRr, op.btSl,
+							op.btKs, op.btMul, op.btDt,
+							op.btSsgEg,
+							op.bSsgEgInverted? "i": " ",
+							op.nEnvLevel, kStateStr[nState]);
+					}
+				}
+				fflush(stderr);
 				s_nonZeroCount = 0;
 				s_minSample = 0;
 				s_maxSample = 0;
 				s_sumAbs = 0;
-				fflush(stderr);
+				for (int c = 0; c < FM_CHANNEL_COUNT; c++) {
+					s_sumAbsCh[c] = 0;
+					s_minCh[c] = 0;
+					s_maxCh[c] = 0;
+				}
 			}
 		}
 	}
@@ -1390,15 +1630,22 @@ int CPC88Opna::RenderFmChannel(int nChannel) {
 
 	// OP1 self-feedback: sum of the two most recent OP1 outputs,
 	// shifted to convert into phase-index units. FB=0 disables
-	// feedback; FB=1..7 maps to a right-shift of (9..3) so higher FB
-	// values produce stronger phase modulation. This matches the
-	// standard YM2151/YM2203 formula `(out_prev0 + out_prev1) >> (9-FB)`.
-	// (Earlier code used `>> (10-FB)` which gave half the standard
-	// feedback depth and contributed to a "thin" timbre.)
+	// feedback; FB=1..7 maps to a right-shift of (10..4).
+	//
+	// The shift amount must compensate for the operator output peak
+	// so that FB=7 produces the manual-specified 4π modulation level
+	// (= 2048 phase units) when the modulator is at maximum:
+	//
+	//   peak op output     = 8192  (14-bit, post-2026 update)
+	//   peak nSum (=2 ops) = 16384
+	//   FB=7 target        = 2048 phase units
+	//   shift = 16384 / 2048 = 8 = >> 3 = >> (10-7)
+	//
+	// (Pre-2026 the peak was 4096 and the shift was `>> (9-FB)`.)
 	int nFbMod = 0;
 	if (ch.btFb > 0) {
 		int nSum = ch.anFeedback[0] + ch.anFeedback[1];
-		nFbMod = nSum >> (9 - ch.btFb);
+		nFbMod = nSum >> (10 - ch.btFb);
 	}
 
 	// Operator outputs in physical OP1..OP4 order.

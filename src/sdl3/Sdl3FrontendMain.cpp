@@ -1695,13 +1695,39 @@ int main(int argc, char** argv) {
 
 				// ----- Debug menu -----
 				if (ImGui::BeginMenu("Debug", bCoreReady)) {
+					// Section-level mutes (toggle the entire FM or SSG
+					// section in one click).
 					bool bFmMute  = CPC88::Opna().GetFmMute();
 					bool bSsgMute = CPC88::Opna().GetSsgMute();
-					if (ImGui::MenuItem("Mute FM", NULL, bFmMute)) {
+					if (ImGui::MenuItem("Mute FM (all)", NULL, bFmMute)) {
 						CPC88::Opna().SetFmMute(!bFmMute);
 					}
-					if (ImGui::MenuItem("Mute SSG", NULL, bSsgMute)) {
+					if (ImGui::MenuItem("Mute SSG (all)", NULL, bSsgMute)) {
 						CPC88::Opna().SetSsgMute(!bSsgMute);
+					}
+					ImGui::Separator();
+					// Per-channel FM mute. The synthesis still runs so
+					// the FM debug log keeps reporting per-channel state
+					// even when a channel is muted — useful for
+					// correlating "what I hear" with "what's in the log".
+					for (int nCh = 0; nCh < 3; nCh++) {
+						char szLabel[32];
+						snprintf(szLabel, sizeof(szLabel), "Mute FM ch%d", nCh + 1);
+						bool bChMute = CPC88::Opna().GetFmChMute(nCh);
+						if (ImGui::MenuItem(szLabel, NULL, bChMute)) {
+							CPC88::Opna().SetFmChMute(nCh, !bChMute);
+						}
+					}
+					ImGui::Separator();
+					// Per-channel SSG mute (channels A, B, C).
+					for (int nCh = 0; nCh < 3; nCh++) {
+						char szLabel[32];
+						snprintf(szLabel, sizeof(szLabel),
+							"Mute SSG ch%c", 'A' + nCh);
+						bool bChMute = CPC88::Opna().GetSsgChMute(nCh);
+						if (ImGui::MenuItem(szLabel, NULL, bChMute)) {
+							CPC88::Opna().SetSsgChMute(nCh, !bChMute);
+						}
 					}
 					ImGui::EndMenu();
 				}
