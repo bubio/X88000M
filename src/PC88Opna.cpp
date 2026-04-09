@@ -263,6 +263,11 @@ void CPC88Opna::Reset() {
 	for (int n = 0; n < REGISTER_COUNT; n++) {
 		m_abtRegisters[n] = 0;
 	}
+	// SSG mixer reset state per YM2149 datasheet: $07 = $FF
+	// (= every channel's tone and noise both disabled, I/O ports as
+	// outputs). Match m_btSsgMixer below so the mirror and the
+	// dedicated runtime variable agree from the very first sample.
+	m_abtRegisters[0x07] = 0xFF;
 	m_nSampleAccumX256 = 0;
 	// Recompute cycles-per-sample because m_nBaseClock may have changed.
 	if (m_nSampleRate > 0) {
@@ -645,6 +650,7 @@ void CPC88Opna::AdvanceSsgOneTick() {
 // produce one output sample by mixing the three SSG channels
 
 int CPC88Opna::RenderSsgSample() {
+	int anChAmp[SSG_CHANNEL_COUNT] = { 0, 0, 0 };
 	int nMix = 0;
 	for (int n = 0; n < SSG_CHANNEL_COUNT; n++) {
 		// Per-channel mute (Debug menu). Skip the contribution but
@@ -677,7 +683,108 @@ int CPC88Opna::RenderSsgSample() {
 		} else {
 			nAmp = m_anSsgVolTable[m_anSsgVolume[n] & 0x0F];
 		}
+		anChAmp[n] = nAmp;
 		nMix += nAmp;
+	}
+	// DEBUG: SSG-only status dump emitted to stderr every 0.25 sec when
+	// X88_SSG_DEBUG=1. Independent of the FM debug log so the two can
+	// be enabled separately. Includes the full $00-$0F register mirror,
+	// runtime envelope / tone / noise state, and per-channel
+	// contribution stats.
+	{
+		static int s_check = -1;
+		static bool s_enabled = false;
+		if (s_check < 0) {
+			s_check = 1;
+			const char* p = getenv("X88_SSG_DEBUG");
+			s_enabled = (p != NULL) && (*p != '\0') && (*p != '0');
+		}
+		if (s_enabled) {
+			static int s_sampleCount = 0;
+			static int s_lastReport = 0;
+			static long long s_sumAbs = 0;
+			static int s_minSample = 0;
+			static int s_maxSample = 0;
+			static long long s_sumAbsCh[SSG_CHANNEL_COUNT] = { 0, 0, 0 };
+			static int s_maxCh[SSG_CHANNEL_COUNT] = { 0, 0, 0 };
+			s_sampleCount++;
+			s_sumAbs += (nMix < 0)? -nMix: nMix;
+			if (nMix < s_minSample) s_minSample = nMix;
+			if (nMix > s_maxSample) s_maxSample = nMix;
+			for (int c = 0; c < SSG_CHANNEL_COUNT; c++) {
+				int v = anChAmp[c];
+				s_sumAbsCh[c] += v;  // anChAmp is already non-negative
+				if (v > s_maxCh[c]) s_maxCh[c] = v;
+			}
+			if (s_sampleCount - s_lastReport >= 11025) {
+				int nReportFrames = s_sampleCount - s_lastReport;
+				int nMeanAbs = (int)(s_sumAbs / nReportFrames);
+				s_lastReport = s_sampleCount;
+				fprintf(stderr,
+					"\n========== [SSG dump @ s=%d (~%.2fs)] ==========\n"
+					"section mute: SSG=%c    chMute=[A:%c B:%c C:%c]\n"
+					"mix: min=%d max=%d meanAbs=%d\n"
+					"regs: ",
+					s_sampleCount, (double)s_sampleCount / 44100.0,
+					m_bSsgMute? 'M': '.',
+					m_abSsgChMute[0]? 'M': '.',
+					m_abSsgChMute[1]? 'M': '.',
+					m_abSsgChMute[2]? 'M': '.',
+					s_minSample, s_maxSample, nMeanAbs);
+				for (int r = 0; r < 16; r++) {
+					fprintf(stderr, "%02X%s",
+						m_abtRegisters[r],
+						(r == 7)? "  " : " ");
+				}
+				fprintf(stderr, "\n");
+				// Mixer decoded
+				int nMix07 = m_btSsgMixer;
+				fprintf(stderr,
+					"mixer $07=$%02X  toneDis:[A:%d B:%d C:%d]  "
+					"noiseDis:[A:%d B:%d C:%d]  ioDir:[A:%d B:%d]\n",
+					nMix07,
+					(nMix07     ) & 1, (nMix07 >> 1) & 1, (nMix07 >> 2) & 1,
+					(nMix07 >> 3) & 1, (nMix07 >> 4) & 1, (nMix07 >> 5) & 1,
+					(nMix07 >> 6) & 1, (nMix07 >> 7) & 1);
+				// Per-channel detail
+				for (int c = 0; c < SSG_CHANNEL_COUNT; c++) {
+					int nMeanCh = (int)(s_sumAbsCh[c] / nReportFrames);
+					fprintf(stderr,
+						"ch%c %s tone_period=%4d  tone_cnt=%4d state=%d  "
+						"vol=%2d %s  contrib: max=%d meanAbs=%d\n",
+						'A' + c,
+						m_abSsgChMute[c]? "[MUTE]": "      ",
+						m_anSsgTonePeriod[c],
+						m_anSsgToneCounter[c],
+						m_anSsgToneState[c],
+						m_anSsgVolume[c],
+						m_abSsgUseEnv[c]? "ENV": "fix",
+						s_maxCh[c], nMeanCh);
+				}
+				// Noise + envelope
+				fprintf(stderr,
+					"noise: period=%d cnt=%d state=%d lfsr=%05X\n"
+					"env: period=%d cnt=%d level=%d dir=%+d hold=%c shape=$%X (cont=%d att=%d alt=%d hold=%d)\n",
+					m_nSsgNoisePeriod, m_nSsgNoiseCounter,
+					m_nSsgNoiseState, m_nSsgNoiseLfsr & 0x1FFFF,
+					m_nSsgEnvPeriod, m_nSsgEnvCounter,
+					m_nSsgEnvLevel, m_nSsgEnvDir,
+					m_bSsgEnvHolding? 'Y': 'N',
+					m_abtRegisters[0x0D] & 0x0F,
+					(m_abtRegisters[0x0D] >> 3) & 1,
+					(m_abtRegisters[0x0D] >> 2) & 1,
+					(m_abtRegisters[0x0D] >> 1) & 1,
+					(m_abtRegisters[0x0D]     ) & 1);
+				fflush(stderr);
+				s_sumAbs = 0;
+				s_minSample = 0;
+				s_maxSample = 0;
+				for (int c = 0; c < SSG_CHANNEL_COUNT; c++) {
+					s_sumAbsCh[c] = 0;
+					s_maxCh[c] = 0;
+				}
+			}
+		}
 	}
 	// Note: no static DC offset is subtracted. The signal swings
 	// between 0 and (sum of active channel amplitudes), so it
@@ -691,6 +798,31 @@ int CPC88Opna::RenderSsgSample() {
 // handle a write to one of the SSG registers ($00–$0F)
 
 void CPC88Opna::OnSsgRegisterWrite(int nAddress, uint8_t btData) {
+	// Per-write log gated by X88_SSG_DEBUG=1. Logs every $00-$0F write
+	// in the order they arrive so we can see exactly what the sound
+	// driver does (envelope period sequences for melody-via-envelope
+	// tricks, mixer toggles, vol register modulation, etc.).
+	{
+		static int s_check = -1;
+		static bool s_enabled = false;
+		if (s_check < 0) {
+			s_check = 1;
+			const char* p = getenv("X88_SSG_DEBUG");
+			s_enabled = (p != NULL) && (*p != '\0') && (*p != '0');
+		}
+		if (s_enabled) {
+			static const char* kRegName[16] = {
+				"At.lo", "At.hi", "Bt.lo", "Bt.hi",
+				"Ct.lo", "Ct.hi", "noise", "mixer",
+				"Avol ", "Bvol ", "Cvol ", "ep.lo",
+				"ep.hi", "shape", "ioA  ", "ioB  "
+			};
+			fprintf(stderr, "[SSG] $%02X=%02X (%s)\n",
+				nAddress, btData,
+				(nAddress < 16)? kRegName[nAddress]: "?    ");
+			fflush(stderr);
+		}
+	}
 	switch (nAddress) {
 	case 0x00: // CH A tone period low
 	case 0x02: // CH B tone period low
@@ -1555,22 +1687,11 @@ int CPC88Opna::RenderFmSample() {
 				fprintf(stderr,
 					"\n========== [FM dump @ s=%d (~%.2fs)] ==========\n"
 					"writes: opn_total=%d fm_total=%d  mix: nz=%d min=%d max=%d meanAbs=%d\n"
-					"section mute: FM=%c SSG=%c\n"
-					"SSG: mix=$%02X vol=[A:%d%c B:%d%c C:%d%c] tone=[%d %d %d] np=%d ep=%d sh=$%X envL=%d  chMute=[%c%c%c]\n",
+					"section mute: FM=%c SSG=%c\n",
 					s_sampleCount, (double)s_sampleCount / 44100.0,
 					g_nOpnTotalWrites, g_nFmTotalWrites,
 					s_nonZeroCount, s_minSample, s_maxSample, nMeanAbs,
-					m_bFmMute? 'M': '.', m_bSsgMute? 'M': '.',
-					m_btSsgMixer,
-					m_anSsgVolume[0], m_abSsgUseEnv[0]? 'E': '.',
-					m_anSsgVolume[1], m_abSsgUseEnv[1]? 'E': '.',
-					m_anSsgVolume[2], m_abSsgUseEnv[2]? 'E': '.',
-					m_anSsgTonePeriod[0], m_anSsgTonePeriod[1], m_anSsgTonePeriod[2],
-					m_nSsgNoisePeriod, m_nSsgEnvPeriod,
-					m_abtRegisters[0x0D] & 0x0F, m_nSsgEnvLevel,
-					m_abSsgChMute[0]? 'M': '.',
-					m_abSsgChMute[1]? 'M': '.',
-					m_abSsgChMute[2]? 'M': '.');
+					m_bFmMute? 'M': '.', m_bSsgMute? 'M': '.');
 				static const char* kStateStr[5] = {
 					"OFF", "ATK", "DEC", "SUS", "REL"
 				};
