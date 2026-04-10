@@ -32,6 +32,8 @@
 #include <mutex>
 #include <stdint.h>
 #include <vector>
+#include <time.h>
+#include <sys/stat.h>
 
 #ifdef X88000_SDL3_HAS_CORE
 
@@ -1113,7 +1115,16 @@ void DrawExportRamWindow(bool& bShow)
 		}
 		ImGui::SameLine();
 		if (ImGui::Button("Export")) {
-			const std::string& fstrDir = strExportDir;
+			// Create timestamped subfolder: X88000M_RAM_YYYYMMDD_HHMMSS/
+			char szTime[64];
+			{
+				time_t t = time(NULL);
+				struct tm* pTm = localtime(&t);
+				strftime(szTime, sizeof(szTime),
+					"X88000M_RAM_%Y%m%d_%H%M%S", pTm);
+			}
+			std::string fstrDir = strExportDir + szTime + "/";
+			mkdir(fstrDir.c_str(), 0755);
 			int nExported = 0;
 			FILE* fpt;
 			std::string fstrPath;
@@ -1306,11 +1317,19 @@ enum { DEBUGLOG_COLMAX = 8 };
 bool StartDebugLog()
 {
 	if (g_pfDebugLog != NULL) return false;
+	char szTime[64];
+	{
+		time_t t = time(NULL);
+		struct tm* pTm = localtime(&t);
+		strftime(szTime, sizeof(szTime),
+			"X88000M_ExecTrace_%Y%m%d_%H%M%S.log", pTm);
+	}
 	std::string fstrPath;
-	if (!g_vRomSearchDir.empty()) {
-		fstrPath = g_vRomSearchDir[0] + "Debug.log";
+	const char* pHome = getenv("HOME");
+	if (pHome && *pHome) {
+		fstrPath = std::string(pHome) + "/Documents/" + szTime;
 	} else {
-		fstrPath = "Debug.log";
+		fstrPath = szTime;
 	}
 	g_pfDebugLog = fopen(fstrPath.c_str(), "at");
 	if (g_pfDebugLog != NULL) {
@@ -2697,8 +2716,8 @@ int main(int argc, char** argv) {
 					ImGui::EndMenu();
 				}
 
-				// ----- Media menu -----
-				if (ImGui::BeginMenu("Media")) {
+				// ----- Disk menu -----
+				if (ImGui::BeginMenu("Disk")) {
 #ifdef X88000_SDL3_HAS_CORE
 					if (ImGui::MenuItem("Open Media...", "Ctrl+O", false, bCoreReady)) {
 						RequestOpenMediaDialog(pWindow, -1);
@@ -2731,19 +2750,6 @@ int main(int argc, char** argv) {
 					ImGui::EndMenu();
 				}
 
-				// ----- View menu -----
-				if (ImGui::BeginMenu("View")) {
-					bool bIsFullscreen = (SDL_GetWindowFlags(pWindow) & SDL_WINDOW_FULLSCREEN) != 0;
-					if (ImGui::MenuItem("Fullscreen", "Ctrl+Enter", bIsFullscreen)) {
-						ToggleFullscreen(pWindow);
-					}
-					ImGui::Separator();
-					if (ImGui::MenuItem("Status Panel", NULL, bShowStatusWindow)) {
-						bShowStatusWindow = !bShowStatusWindow;
-					}
-					ImGui::EndMenu();
-				}
-
 				// ----- Debug menu -----
 				if (ImGui::BeginMenu("Debug", bCoreReady)) {
 					// Open/close debug window (= enter/exit debug mode)
@@ -2762,20 +2768,6 @@ int main(int argc, char** argv) {
 							OpenDebugWindow(dbgWin, pMainImGuiCtx, settings);
 						}
 					}
-					ImGui::Separator();
-
-					// Record Execution Log
-					bool bDebugMode = CPC88::IsDebugMode();
-					ImGui::BeginDisabled(!bDebugMode);
-					bool bLogging = IsDebugLogging();
-					if (ImGui::MenuItem("Record Execution Log", NULL, bLogging)) {
-						if (bLogging) {
-							EndDebugLog();
-						} else {
-							StartDebugLog();
-						}
-					}
-					ImGui::EndDisabled();
 					ImGui::Separator();
 
 					// Audio mute controls
@@ -2810,14 +2802,22 @@ int main(int argc, char** argv) {
 				}
 
 				// ----- Help menu -----
+				static bool bOpenAbout = false;
 				if (ImGui::BeginMenu("Help")) {
 					if (ImGui::MenuItem("About X88000M...")) {
-						ImGui::OpenPopup("About X88000M");
+						bOpenAbout = true;
 					}
 					ImGui::EndMenu();
 				}
 
-				// About modal popup, anchored to main menu bar.
+				ImGui::EndMainMenuBar();
+
+				// About modal popup — OpenPopup must be called outside the
+				// menu scope so the popup ID is reachable.
+				if (bOpenAbout) {
+					ImGui::OpenPopup("About X88000M");
+					bOpenAbout = false;
+				}
 				ImVec2 vCenter = ImGui::GetMainViewport()->GetCenter();
 				ImGui::SetNextWindowPos(vCenter, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 				if (ImGui::BeginPopupModal("About X88000M", NULL,
@@ -2836,8 +2836,6 @@ int main(int argc, char** argv) {
 					}
 					ImGui::EndPopup();
 				}
-
-				ImGui::EndMainMenuBar();
 			}
 #ifdef X88000_SDL3_HAS_CORE
 			if (bCoreReady && bShowEnvWindow) {
@@ -2974,6 +2972,19 @@ int main(int argc, char** argv) {
 					}
 					if (ImGui::MenuItem("Execute Step2", "Alt+F12")) {
 						CPC88::DebugExecuteStepTrace(CPC88::DEBUGSTEP_STEP2);
+					}
+					ImGui::EndDisabled();
+					ImGui::Separator();
+
+					// Record Execution Log
+					ImGui::BeginDisabled(!bDebugMode);
+					bool bLogging = IsDebugLogging();
+					if (ImGui::MenuItem("Record Execution Log", NULL, bLogging)) {
+						if (bLogging) {
+							EndDebugLog();
+						} else {
+							StartDebugLog();
+						}
 					}
 					ImGui::EndDisabled();
 					ImGui::EndMenu();
