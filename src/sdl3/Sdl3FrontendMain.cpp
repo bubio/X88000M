@@ -7,6 +7,7 @@
 #include "X88ScreenDrawer.h"
 #include "X88DiskImageMemory.h"
 #include "ParallelNull.h"
+#include "ParallelPR201.h"
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -32,6 +33,7 @@
 #include <mutex>
 #include <stdint.h>
 #include <vector>
+#include <queue>
 #include <time.h>
 #include <sys/stat.h>
 
@@ -43,6 +45,8 @@ std::vector<std::string> g_vRomSearchDir;
 CPC88 g_pc88;
 CX88ScreenDrawer g_screenDrawer;
 CParallelNull g_parallelNull;
+CParallelPR201 g_parallelPR201;
+int g_nParallelDevice = 0; // 0=Null, 1=PR201
 CSdl3AudioOutput g_audio;
 bool g_bScreenDrawerReady = false;
 std::set<CX88DiskImageMemory> g_setDiskImageMemory;
@@ -213,6 +217,22 @@ void ApplyEnvSettingsFromIni(CSdl3Settings& settings)
 	if (!strPcg.empty()) {
 		CPC88::SetPcgEnable(ParseBoolEntry(strPcg, false));
 	}
+	// Hi-resolution
+	std::string strHireso = settings.GetSectionString(SECTION_OPTION, "hireso", "");
+	if (!strHireso.empty()) {
+		CPC88::SetHiresolution(ParseBoolEntry(strHireso, false));
+	}
+	// Option font (overseas mode)
+	std::string strOptFont = settings.GetSectionString(SECTION_OPTION, "optionfont", "");
+	if (!strOptFont.empty()) {
+		CPC88::SetOptionFont(ParseBoolEntry(strOptFont, false));
+	}
+	// Interlace
+	std::string strInterlace = settings.GetSectionString(SECTION_OPTION, "interlace", "");
+	if (!strInterlace.empty()) {
+		bool bInterlace = ParseBoolEntry(strInterlace, false);
+		CX88ScreenDrawer::SetInterlace(bInterlace);
+	}
 }
 
 // Volatile mirror of env settings used by the ImGui window. These are
@@ -230,6 +250,9 @@ struct SEnvSettingsView {
 	bool bPcgMute;
 	bool bInterlace;
 	int  nFrameRate;
+	bool bHiResolution;
+	bool bOptionFont;
+	int  nBoostLimiter;
 	bool bLoaded;
 	SEnvSettingsView() :
 		nBasicChoice(BASIC_CHOICE_V2),
@@ -244,6 +267,9 @@ struct SEnvSettingsView {
 		bPcgMute(false),
 		bInterlace(false),
 		nFrameRate(20),
+		bHiResolution(false),
+		bOptionFont(false),
+		nBoostLimiter(0),
 		bLoaded(false)
 	{
 	}
@@ -266,6 +292,9 @@ void LoadEnvSettingsView(SEnvSettingsView& view, CSdl3Settings& settings)
 	view.bPcgMute    = ParseBoolEntry(settings.GetSectionString(SECTION_OPTION, "pcgmute", "off"), false);
 	view.bInterlace  = ParseBoolEntry(settings.GetSectionString(SECTION_OPTION, "interlace", "off"), false);
 	view.nFrameRate  = atoi(settings.GetSectionString(SECTION_OPTION, "framerate", "20").c_str());
+	view.bHiResolution = CPC88::IsHiresolution();
+	view.bOptionFont   = CPC88::IsOptionFont();
+	view.nBoostLimiter = atoi(settings.GetSectionString(SECTION_OPTION, "boostlim", "0").c_str());
 	if (view.nFrameRate <= 0) {
 		view.nFrameRate = 20;
 	}
@@ -344,6 +373,30 @@ bool DrawEnvSettingsWindow(bool& bShow, SEnvSettingsView& view, CSdl3Settings& s
 				settings.SetSectionString(SECTION_OPTION, "oldcompat", BoolToOnOff(view.bOldCompatible));
 				bRequestReset = true;
 			}
+
+			if (ImGui::Checkbox("Hi-resolution (24 KHz)", &view.bHiResolution)) {
+				CPC88::SetHiresolution(view.bHiResolution);
+				settings.SetSectionString(SECTION_OPTION, "hireso", BoolToOnOff(view.bHiResolution));
+				bRequestReset = true;
+			}
+
+			int nBoostLim = view.nBoostLimiter;
+			const char* aszBoostLimLabels[] = {
+				"Off", "25%", "50%", "75%", "150%", "200%", "300%", "400%"
+			};
+			const int anBoostLimValues[] = {
+				0, 25, 50, 75, 150, 200, 300, 400
+			};
+			int nBoostLimIdx = 0;
+			for (int i = 0; i < 8; i++) {
+				if (anBoostLimValues[i] == nBoostLim) { nBoostLimIdx = i; break; }
+			}
+			if (ImGui::Combo("Boost limiter", &nBoostLimIdx, aszBoostLimLabels, 8)) {
+				view.nBoostLimiter = anBoostLimValues[nBoostLimIdx];
+				char szBuf[16];
+				snprintf(szBuf, sizeof(szBuf), "%d", view.nBoostLimiter);
+				settings.SetSectionString(SECTION_OPTION, "boostlim", szBuf);
+			}
 		}
 
 		if (ImGui::CollapsingHeader("Emulation", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -354,6 +407,10 @@ bool DrawEnvSettingsWindow(bool& bShow, SEnvSettingsView& view, CSdl3Settings& s
 			if (ImGui::Checkbox("PCG enable", &view.bPcgEnable)) {
 				CPC88::SetPcgEnable(view.bPcgEnable);
 				settings.SetSectionString(SECTION_OPTION, "pcg", BoolToOnOff(view.bPcgEnable));
+			}
+			if (ImGui::Checkbox("Option font (overseas mode)", &view.bOptionFont)) {
+				CPC88::SetOptionFont(view.bOptionFont);
+				settings.SetSectionString(SECTION_OPTION, "optionfont", BoolToOnOff(view.bOptionFont));
 			}
 		}
 
@@ -368,9 +425,10 @@ bool DrawEnvSettingsWindow(bool& bShow, SEnvSettingsView& view, CSdl3Settings& s
 				}
 			}
 			if (ImGui::Checkbox("Interlace", &view.bInterlace)) {
+				CX88ScreenDrawer::SetInterlace(view.bInterlace);
+				CPC88::Z80Main().SetGVRamUpdate(true);
 				settings.SetSectionString(SECTION_OPTION, "interlace", BoolToOnOff(view.bInterlace));
 			}
-			ImGui::TextDisabled("(frame rate / interlace will be wired up in a later phase)");
 		}
 
 		if (ImGui::CollapsingHeader("Sound", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -394,7 +452,6 @@ bool DrawEnvSettingsWindow(bool& bShow, SEnvSettingsView& view, CSdl3Settings& s
 				settings.SetSectionString(SECTION_OPTION, "pcgmute", BoolToOnOff(view.bPcgMute));
 				g_audio.SetPcgMute(view.bPcgMute);
 			}
-			ImGui::TextDisabled("(YM2203/OPN output will be added in Phase C)");
 		}
 	}
 	ImGui::End();
@@ -1023,6 +1080,171 @@ void DrawWriteRamWindow(bool& bShow)
 		}
 	}
 	ImGui::End();
+}
+
+// IME character paste support — ported from CX88000::m_awIMECharTable
+// Each entry encodes a key matrix position:
+//   bits 11-8: shift flag (0x01=shift, 0x10=kana)
+//   bits 7-4:  row in key matrix
+//   bits 2-0:  column in key matrix
+uint16_t g_awIMECharTable[] = {
+	// 0x20-0x2F: Marks (space ! " # $ % & ' ( ) * + , - . /)
+	0x0096, 0x0161, 0x0162, 0x0163, 0x0164, 0x0165, 0x0166, 0x0167,
+	0x0170, 0x0171, 0x0172, 0x0173, 0x0074, 0x0057, 0x0075, 0x0076,
+	// 0x30-0x3F: Numeric (0-9 : ; < = > ?)
+	0x0060, 0x0061, 0x0062, 0x0063, 0x0064, 0x0065, 0x0066, 0x0067,
+	0x0070, 0x0071, 0x0072, 0x0073, 0x0174, 0x0157, 0x0175, 0x0176,
+	// 0x40-0x5F: Upper Alpha (@ A-Z [ \ ] ^ _)
+	0x0020, 0x0121, 0x0122, 0x0123, 0x0124, 0x0125, 0x0126, 0x0127,
+	0x0130, 0x0131, 0x0132, 0x0133, 0x0134, 0x0135, 0x0136, 0x0137,
+	0x0140, 0x0141, 0x0142, 0x0143, 0x0144, 0x0145, 0x0146, 0x0147,
+	0x0150, 0x0151, 0x0152, 0x0053, 0x0054, 0x0055, 0x0056, 0x0177,
+	// 0x60-0x7F: Lower Alpha (` a-z { | } ~ DEL)
+	0x0120, 0x0021, 0x0022, 0x0023, 0x0024, 0x0025, 0x0026, 0x0027,
+	0x0030, 0x0031, 0x0032, 0x0033, 0x0034, 0x0035, 0x0036, 0x0037,
+	0x0040, 0x0041, 0x0042, 0x0043, 0x0044, 0x0045, 0x0046, 0x0047,
+	0x0050, 0x0051, 0x0052, 0x0153, 0x0154, 0x0155, 0x0156, 0x0000,
+	// 0x80-0x9F: (unused, padding to keep kana at correct offset)
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+	// 0xA0-0xDF: Kana (half-width katakana, indexed as btIME-0x40)
+	// Index 0x60=space, 0x61-0x9F=kana chars, 0x9E=dakuten, 0x9F=handakuten
+	0x0000, 0x1175, 0x1153, 0x1155, 0x1174, 0x1176, 0x1160, 0x1163,
+	0x1125, 0x1164, 0x1165, 0x1166, 0x1167, 0x1170, 0x1171, 0x1152,
+	0x1054, 0x1063, 0x1025, 0x1064, 0x1065, 0x1066, 0x1044, 0x1027,
+	0x1030, 0x1072, 0x1022, 0x1050, 0x1024, 0x1042, 0x1040, 0x1023,
+	0x1041, 0x1021, 0x1052, 0x1047, 0x1043, 0x1045, 0x1031, 0x1061,
+	0x1074, 0x1033, 0x1026, 0x1046, 0x1062, 0x1056, 0x1057, 0x1032,
+	0x1036, 0x1055, 0x1076, 0x1035, 0x1067, 0x1070, 0x1071, 0x1037,
+	0x1034, 0x1075, 0x1073, 0x1077, 0x1060, 0x1051, 0x1020, 0x1053,
+	// 0xA0: Return (table index 0xA0 = 160)
+	0x0017,
+	// 0xA1: Tab (table index 0xA1 = 161)
+	0x00A0
+};
+
+std::queue<uint16_t> g_queueIMEChar;
+int g_nIMECharPhase = 0;
+// Phase 0: set shift/kana modifiers, key OFF (1 frame)
+// Phase 1: key ON + modifiers (2 frames)
+// Phase 2: all keys OFF (1 frame), advance to next char
+
+enum {
+	IME_KEY_RETURN = 0x0017,
+	IME_KEY_TAB    = 0x00A0
+};
+
+void AddPasteText(const char* pszText)
+{
+	if (!pszText) return;
+	for (; *pszText != '\0'; pszText++) {
+		uint8_t ch = (uint8_t)*pszText;
+		if (ch >= 0x20 && ch <= 0x7E) {
+			g_queueIMEChar.push(g_awIMECharTable[ch - 0x20]);
+		} else if (ch == 0x0A) {
+			// LF → Return key
+			g_queueIMEChar.push(IME_KEY_RETURN);
+		} else if (ch == 0x0D) {
+			// CR → Return key (skip if followed by LF to avoid double return)
+			if (*(pszText + 1) != 0x0A) {
+				g_queueIMEChar.push(IME_KEY_RETURN);
+			}
+		} else if (ch == 0x09) {
+			// Tab
+			g_queueIMEChar.push(IME_KEY_TAB);
+		}
+	}
+}
+
+// Screenshot save dialog result — may be called from a non-main thread.
+std::string g_strPendingScreenshotPath;
+std::mutex  g_mtxScreenshot;
+
+void SDLCALL OnScreenshotPathSelected(void* userdata, const char* const* filelist, int filter)
+{
+	(void)userdata;
+	(void)filter;
+	if (filelist && filelist[0]) {
+		std::lock_guard<std::mutex> lock(g_mtxScreenshot);
+		g_strPendingScreenshotPath = filelist[0];
+	}
+}
+
+bool DoSaveScreenshot(const std::string& fstrPath)
+{
+	if (!g_bScreenDrawerReady) return false;
+	// Build ARGB pixel buffer (reuse the same logic as UploadCoreFrameToTexture)
+	std::vector<uint32_t> vPixels(640 * 400);
+	if (CPC88::Z80Main().IsVABScreenActive()) {
+		uint8_t* pRgb = CX88ScreenDrawer::GetScreenDataBits2();
+		if (!pRgb) return false;
+		for (int n = 0; n < 640*400; n++) {
+			vPixels[n] = 0xFF000000U
+				| (uint32_t(pRgb[n*3+0]) << 16)
+				| (uint32_t(pRgb[n*3+1]) << 8)
+				| uint32_t(pRgb[n*3+2]);
+		}
+	} else {
+		uint8_t* pIdx = CX88ScreenDrawer::GetScreenDataBits();
+		if (!pIdx) return false;
+		GdkColor* pCT = CX88ScreenDrawer::GetColorTable();
+		for (int n = 0; n < 640*400; n++) {
+			uint8_t p = pIdx[n];
+			vPixels[n] = 0xFF000000U
+				| (uint32_t(pCT[p].red >> 8) << 16)
+				| (uint32_t(pCT[p].green >> 8) << 8)
+				| uint32_t(pCT[p].blue >> 8);
+		}
+	}
+	SDL_Surface* pSurf = SDL_CreateSurfaceFrom(
+		640, 400, SDL_PIXELFORMAT_ARGB8888, &vPixels[0], 640 * 4);
+	if (!pSurf) return false;
+	bool bOK = SDL_SaveBMP(pSurf, fstrPath.c_str());
+	SDL_DestroySurface(pSurf);
+	return bOK;
+}
+
+bool DoCopyScreenText()
+{
+	// Match GTK implementation: X88000.cpp DoClipboardCopyText() lines 1239-1334
+	int nWidth = CPC88::Crtc().IsWidth80() ? 80 : 40;
+	int nHeight = CPC88::Crtc().IsHeight25() ? 25 : 20;
+	std::string strText;
+	int nOfs = 0;
+	for (int y = 0; y < nHeight; y++) {
+		int nSpace = 0;
+		for (int x = 0; x < nWidth; x++) {
+			uint8_t btChar = CX88ScreenDrawer::GetTextChar(nOfs);
+			uint8_t btAttr = CX88ScreenDrawer::GetTextAttr(nOfs);
+			bool bSkip = ((btAttr & CX88ScreenDrawer::TATTR_GRAPHIC) != 0)
+				|| (btChar <= 0x20)
+				|| ((btChar > 0x7E) && (btChar < 0xA1))
+				|| (btChar > 0xDF);
+			if (bSkip) {
+				nSpace++;
+			} else {
+				for (; nSpace > 0; nSpace--) {
+					strText += ' ';
+				}
+				// ASCII printable range only (skip half-width kana for now)
+				if (btChar >= 0x21 && btChar <= 0x7E) {
+					strText += (char)btChar;
+				}
+			}
+			nOfs += (nWidth <= 40) ? 2 : 1;
+		}
+		strText += '\n';
+	}
+	// Remove trailing blank lines
+	while (strText.size() >= 2
+		&& strText[strText.size()-1] == '\n'
+		&& strText[strText.size()-2] == '\n')
+	{
+		strText.erase(strText.size()-1);
+	}
+	return SDL_SetClipboardText(strText.c_str());
 }
 
 // Export folder dialog result — may be called from a non-main thread.
@@ -1823,6 +2045,22 @@ void ParseInitialMediaArgs(int argc, char** argv)
 	}
 }
 
+// Memory image load — async dialog result
+std::string g_strPendingMemoryImage;
+std::mutex  g_mtxMemoryImage;
+
+void SDLCALL OnMemoryImageDialogResult(
+	void* pUserData,
+	const char* const* ppszFileList,
+	int)
+{
+	(void)pUserData;
+	if (ppszFileList && ppszFileList[0]) {
+		std::lock_guard<std::mutex> lock(g_mtxMemoryImage);
+		g_strPendingMemoryImage = ppszFileList[0];
+	}
+}
+
 void EnqueueDialogMediaPath(const std::string& fstrPath, int nDrive)
 {
 	std::lock_guard<std::mutex> lock(g_mtxDialogQueue);
@@ -2047,11 +2285,14 @@ bool InitializeCore()
 	CPC88::Z80Main().SetParallelDevice(g_parallelNull);
 	g_parallelNull.Initialize();
 	g_parallelNull.Reset();
+	g_parallelPR201.Initialize();
+	g_parallelPR201.Reset();
 	if (!ProbeRomAvailability()) {
 		return false;
 	}
 	CPC88::Initialize();
 	CPC88::Reset();
+	// Interlace is applied later via ApplyEnvSettingsFromIni; default off.
 	g_bScreenDrawerReady = g_screenDrawer.Create(g_pc88, false);
 	return true;
 }
@@ -2369,6 +2610,7 @@ int main(int argc, char** argv) {
 	bool bShowTapeWindow = false;
 	SDebugWindow dbgWin;
 	InitDebugWindowStruct(dbgWin);
+	bool bBoostMode = false;
 	SEnvSettingsView envView;
 	std::vector<uint32_t> vArgbBuffer;
 	const Uint64 nPerfFreq = SDL_GetPerformanceFrequency();
@@ -2623,17 +2865,70 @@ int main(int argc, char** argv) {
 
 #ifdef X88000_SDL3_HAS_CORE
 		ProcessQueuedMediaFromDialog(pWindow, bCoreReady, bPauseEmulation);
-		if (bCoreReady && !bPauseEmulation) {
-			// Only feed keyboard to emulator when main window has focus,
-			// so typing in the debug window doesn't trigger emulated keys.
-			SDL_WindowFlags nMainFlags = SDL_GetWindowFlags(pWindow);
-			if (nMainFlags & SDL_WINDOW_INPUT_FOCUS) {
-				UpdateKeyMatricsFromSDL();
+		// Process pending screenshot save
+		{
+			std::lock_guard<std::mutex> lock(g_mtxScreenshot);
+			if (!g_strPendingScreenshotPath.empty()) {
+				DoSaveScreenshot(g_strPendingScreenshotPath);
+				g_strPendingScreenshotPath.clear();
 			}
-			if (!CPC88::IsDebugMode()) {
-				CPC88::Execute(4000000/60);
-			} else if (!CPC88::IsDebugStopped()) {
-				CPC88::DebugExecute(4000000/60);
+		}
+		// Process pending memory image load
+		{
+			std::lock_guard<std::mutex> lock(g_mtxMemoryImage);
+			if (!g_strPendingMemoryImage.empty()) {
+				CPC88::LoadMemoryImage(g_strPendingMemoryImage);
+				g_strPendingMemoryImage.clear();
+			}
+		}
+		if (bCoreReady && !bPauseEmulation) {
+			if (!g_queueIMEChar.empty()) {
+				// Paste text: emulate GTK's 2ms-granularity key injection
+				// by splitting frame execution into EXECUTE_UNIT_TIME chunks.
+				enum { EXEC_UNIT = 2 }; // ms, matches CX88000::EXECUTE_UNIT_TIME
+				enum { IME_WAIT = 200 }; // ms per character
+				int nClockPerUnit = CPC88::GetBaseClock() * 1000 * EXEC_UNIT;
+				int nUnitsPerFrame = (1000/60) / EXEC_UNIT; // ~8 units per frame
+				for (int nUnit = 0; nUnit < nUnitsPerFrame && !g_queueIMEChar.empty(); nUnit++) {
+					CPC88::Z80Main().ClearKeyMatrics();
+					uint16_t wKey = g_queueIMEChar.front();
+					// Set modifier keys
+					CPC88::Z80Main().SetKeyMatrics(
+						0x08, 6, (wKey & 0x0100) != 0);
+					CPC88::Z80Main().SetKeyMatrics(
+						0x08, 5, (wKey & 0x1000) != 0);
+					// Press actual key during middle portion of wait
+					if (g_nIMECharPhase >= IME_WAIT/4 &&
+						g_nIMECharPhase < (IME_WAIT*3)/4)
+					{
+						CPC88::Z80Main().SetKeyMatrics(
+							(wKey >> 4) & 0x0F, wKey & 0x07, true);
+					}
+					g_nIMECharPhase += EXEC_UNIT;
+					if (g_nIMECharPhase >= IME_WAIT) {
+						g_nIMECharPhase = 0;
+						g_queueIMEChar.pop();
+					}
+					if (!CPC88::IsDebugMode()) {
+						CPC88::Execute(nClockPerUnit);
+					}
+				}
+				// Run remaining clocks if any
+				if (g_queueIMEChar.empty()) {
+					// Restore normal keyboard
+					CPC88::Z80Main().ClearKeyMatrics();
+				}
+			} else {
+				// Normal keyboard: only when main window has focus
+				SDL_WindowFlags nMainFlags = SDL_GetWindowFlags(pWindow);
+				if (nMainFlags & SDL_WINDOW_INPUT_FOCUS) {
+					UpdateKeyMatricsFromSDL();
+				}
+				if (!CPC88::IsDebugMode()) {
+					CPC88::Execute(4000000/60);
+				} else if (!CPC88::IsDebugStopped()) {
+					CPC88::DebugExecute(4000000/60);
+				}
 			}
 			UpdateCoreFrame();
 			UploadCoreFrameToTexture(pFrameTexture, vArgbBuffer);
@@ -2700,6 +2995,52 @@ int main(int argc, char** argv) {
 						}
 						ImGui::EndMenu();
 					}
+					if (ImGui::MenuItem("Boost Mode", NULL, bBoostMode, bCoreReady)) {
+						bBoostMode = !bBoostMode;
+					}
+					ImGui::Separator();
+
+					if (ImGui::BeginMenu("Clipboard", bCoreReady)) {
+						if (ImGui::MenuItem("Save Screenshot (BMP)...")) {
+							const SDL_DialogFileFilter aFilter[] = {
+								{ "BMP Image", "bmp" }
+							};
+							SDL_ShowSaveFileDialog(
+								OnScreenshotPathSelected, NULL,
+								pWindow, aFilter, 1, NULL);
+						}
+						if (ImGui::MenuItem("Copy Screen Text")) {
+							DoCopyScreenText();
+						}
+						if (ImGui::MenuItem("Paste Text")) {
+							char* pszClip = SDL_GetClipboardText();
+							if (pszClip) {
+								AddPasteText(pszClip);
+								SDL_free(pszClip);
+							}
+						}
+						ImGui::EndMenu();
+					}
+
+					if (ImGui::BeginMenu("Parallel Port", bCoreReady)) {
+						if (ImGui::MenuItem("Null Device", NULL, g_nParallelDevice == 0)) {
+							if (g_nParallelDevice != 0) {
+								g_nParallelDevice = 0;
+								g_parallelNull.Initialize();
+								g_parallelNull.Reset();
+								CPC88::Z80Main().SetParallelDevice(g_parallelNull);
+							}
+						}
+						if (ImGui::MenuItem("PC-PR201 Printer", NULL, g_nParallelDevice == 1)) {
+							if (g_nParallelDevice != 1) {
+								g_nParallelDevice = 1;
+								g_parallelPR201.Initialize();
+								g_parallelPR201.Reset();
+								CPC88::Z80Main().SetParallelDevice(g_parallelPR201);
+							}
+						}
+						ImGui::EndMenu();
+					}
 					ImGui::Separator();
 
 					if (ImGui::MenuItem("Environment Settings...", NULL, bShowEnvWindow, bCoreReady)) {
@@ -2716,17 +3057,11 @@ int main(int argc, char** argv) {
 					ImGui::EndMenu();
 				}
 
-				// ----- Disk menu -----
-				if (ImGui::BeginMenu("Disk")) {
+				// ----- Media menu -----
+				if (ImGui::BeginMenu("Media")) {
 #ifdef X88000_SDL3_HAS_CORE
 					if (ImGui::MenuItem("Open Media...", "Ctrl+O", false, bCoreReady)) {
 						RequestOpenMediaDialog(pWindow, -1);
-					}
-					if (ImGui::MenuItem("Insert to Drive 1...", NULL, false, bCoreReady)) {
-						RequestOpenMediaDialog(pWindow, 0);
-					}
-					if (ImGui::MenuItem("Insert to Drive 2...", NULL, false, bCoreReady)) {
-						RequestOpenMediaDialog(pWindow, 1);
 					}
 					ImGui::Separator();
 					if (ImGui::MenuItem("Disk Manager...", NULL, bShowDiskWindow, bCoreReady)) {
@@ -2735,16 +3070,16 @@ int main(int argc, char** argv) {
 					if (ImGui::MenuItem("Tape Manager...", NULL, bShowTapeWindow, bCoreReady)) {
 						bShowTapeWindow = !bShowTapeWindow;
 					}
-					ImGui::Separator();
-					if (ImGui::MenuItem("Eject Drive 1", "Ctrl+1", false, bCoreReady)) {
-						EjectDiskImageFromDrive(0);
-						SetMediaStatus("Ejected drive 1");
-						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
-					}
-					if (ImGui::MenuItem("Eject Drive 2", "Ctrl+2", false, bCoreReady)) {
-						EjectDiskImageFromDrive(1);
-						SetMediaStatus("Ejected drive 2");
-						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+					if (ImGui::MenuItem("Load Memory Image...", NULL, false, bCoreReady)) {
+						static const SDL_DialogFileFilter s_aMemFilters[] = {
+							{"Memory Image", "n80"},
+							{"All Files", "*"}
+						};
+						SDL_ShowOpenFileDialog(
+							OnMemoryImageDialogResult, NULL,
+							pWindow, s_aMemFilters,
+							(int)(sizeof(s_aMemFilters)/sizeof(s_aMemFilters[0])),
+							NULL, false);
 					}
 #endif
 					ImGui::EndMenu();
@@ -2824,6 +3159,9 @@ int main(int argc, char** argv) {
 					ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
 				{
 					ImGui::TextUnformatted("X88000M");
+#ifdef X88000M_VERSION
+					ImGui::Text("Version %s (based on X88000 1.5.3)", X88000M_VERSION);
+#endif
 					ImGui::TextUnformatted("PC-8801 emulator (macOS port of X88000)");
 					ImGui::Separator();
 					ImGui::TextUnformatted("Original X88000 by Manuke");
@@ -3074,18 +3412,36 @@ int main(int argc, char** argv) {
 		}
 #endif
 
-		if (nFrameTicks > 0) {
+		if (!bBoostMode && nFrameTicks > 0) {
+			// Normal mode: run at 1x speed (60 FPS pacing)
 			nNextFrameTick += nFrameTicks;
 			Uint64 nNow = SDL_GetPerformanceCounter();
 			if (nNow < nNextFrameTick) {
-				Uint64 nWaitPerf = nNextFrameTick-nNow;
-				Uint64 nWaitMs = (nWaitPerf*1000U)/nPerfFreq;
+				Uint64 nWaitPerf = nNextFrameTick - nNow;
+				Uint64 nWaitMs = (nWaitPerf * 1000U) / nPerfFreq;
 				if (nWaitMs > 0) {
 					SDL_Delay((Uint32)nWaitMs);
 				}
-			} else if ((nNow-nNextFrameTick) > nFrameTicks*4U) {
-				// Avoid unbounded drift when resumed after a long stall.
+			} else if ((nNow - nNextFrameTick) > nFrameTicks * 4U) {
 				nNextFrameTick = nNow;
+			}
+		} else if (bBoostMode && nFrameTicks > 0) {
+			// Boost mode: run as fast as possible, limited by boost limiter.
+			// Limiter value is a percentage of normal speed (e.g. 200 = 2x).
+			// 0 = unlimited.
+			int nLim = envView.nBoostLimiter;
+			if (nLim > 0) {
+				Uint64 nLimitedTicks = nFrameTicks * 100U / (Uint64)nLim;
+				nNextFrameTick += nLimitedTicks;
+				Uint64 nNow = SDL_GetPerformanceCounter();
+				if (nNow < nNextFrameTick) {
+					Uint64 nWaitMs = ((nNextFrameTick - nNow) * 1000U) / nPerfFreq;
+					if (nWaitMs > 0) {
+						SDL_Delay((Uint32)nWaitMs);
+					}
+				} else if ((nNow - nNextFrameTick) > nLimitedTicks * 4U) {
+					nNextFrameTick = nNow;
+				}
 			}
 		}
 	}

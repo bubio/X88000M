@@ -157,7 +157,9 @@ if(X88000M_BUILD_SDL3_FRONTEND)
 			target_link_libraries(X88000SDL3 PRIVATE ${X88000M_SDL3_LINK_TARGET})
 			if(TARGET x88core)
 				target_link_libraries(X88000SDL3 PRIVATE x88core)
-				target_compile_definitions(X88000SDL3 PRIVATE X88000_SDL3_HAS_CORE=1)
+				target_compile_definitions(X88000SDL3 PRIVATE
+				X88000_SDL3_HAS_CORE=1
+				X88000M_VERSION="0.1.0")
 			endif()
 			target_include_directories(X88000SDL3 PRIVATE "${X88000_SRC_DIR}")
 			set_target_properties(X88000SDL3 PROPERTIES
