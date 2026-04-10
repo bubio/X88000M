@@ -16,7 +16,7 @@ option(X88000M_BUILD_SDL3_FRONTEND "Build SDL3 frontend prototype" ON)
 option(X88000M_FETCH_SDL3 "Fetch SDL3 from upstream when pkg-config is unavailable" OFF)
 option(X88000M_FETCH_IMGUI "Fetch Dear ImGui from upstream when third_party/imgui is unavailable" ON)
 set(X88000M_SDL3_GIT_TAG "release-3.4.2" CACHE STRING "SDL3 git tag used by FetchContent")
-set(X88000M_IMGUI_GIT_TAG "v1.92.6" CACHE STRING "Dear ImGui git tag used by FetchContent")
+set(X88000M_IMGUI_GIT_TAG "docking" CACHE STRING "Dear ImGui git tag used by FetchContent (docking branch)")
 
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -188,12 +188,19 @@ if(X88000M_BUILD_SDL3_FRONTEND)
 			set(X88000M_IMGUI_SOURCE_DIR "${X88000_IMGUI_DIR}")
 		elseif(X88000M_FETCH_IMGUI)
 			include(FetchContent)
-			FetchContent_Declare(
-				imgui
-				GIT_REPOSITORY https://github.com/ocornut/imgui.git
-				GIT_TAG ${X88000M_IMGUI_GIT_TAG}
-				GIT_SHALLOW TRUE)
-			FetchContent_MakeAvailable(imgui)
+			set(X88000M_IMGUI_DL_DIR "${CMAKE_BINARY_DIR}/_deps/imgui-src")
+			if(NOT EXISTS "${X88000M_IMGUI_DL_DIR}/imgui.h")
+				message(STATUS "Fetching Dear ImGui (${X88000M_IMGUI_GIT_TAG})...")
+				execute_process(
+					COMMAND git clone --depth 1 --branch ${X88000M_IMGUI_GIT_TAG}
+						https://github.com/ocornut/imgui.git
+						"${X88000M_IMGUI_DL_DIR}"
+					RESULT_VARIABLE _git_result)
+				if(NOT _git_result EQUAL 0)
+					message(FATAL_ERROR "Failed to fetch Dear ImGui")
+				endif()
+			endif()
+			set(imgui_SOURCE_DIR "${X88000M_IMGUI_DL_DIR}")
 			set(X88000M_IMGUI_SOURCE_DIR "${imgui_SOURCE_DIR}")
 		endif()
 

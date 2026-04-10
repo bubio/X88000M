@@ -16,6 +16,7 @@
 #ifdef X88000_SDL3_HAS_IMGUI
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 
@@ -578,20 +579,17 @@ void DrawTapeImageManagerWindow(bool& bShow, SDL_Window* pWindow)
 void DrawDebugMainWindow(bool& bShow)
 {
 	if (!bShow) {
-		// Window was closed — exit debug mode
-		if (CPC88::IsDebugMode()) {
-			CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_NONE);
-		}
 		return;
 	}
 	ImGui::SetNextWindowSize(ImVec2(720, 0), ImGuiCond_FirstUseEver);
-	if (ImGui::Begin("Debugger", &bShow, ImGuiWindowFlags_NoCollapse)) {
+	if (ImGui::Begin("Debugger", NULL, ImGuiWindowFlags_NoCollapse))
+	{
 		bool bDebugMode = CPC88::IsDebugMode();
 		bool bStopped = CPC88::IsDebugStopped();
 		bool bMainCPU = CPC88::IsDebugMain();
 		CZ80Adapter* pZ80A = bDebugMode ? CPC88::GetDebugAdapter() : NULL;
 
-		// CPU target selector
+		// CPU target selector (Main/Sub only, no Off — closing the window exits debug)
 		ImGui::TextUnformatted("Target CPU:");
 		ImGui::SameLine();
 		bool bSubDisabled = CPC88::IsSubSystemDisableNow();
@@ -604,11 +602,6 @@ void DrawDebugMainWindow(bool& bShow)
 			CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_SUB);
 		}
 		ImGui::EndDisabled();
-		ImGui::SameLine();
-		if (ImGui::RadioButton("Off", !bDebugMode)) {
-			CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_NONE);
-			bShow = false; // close window when debug mode is off
-		}
 
 		ImGui::Separator();
 
@@ -649,14 +642,15 @@ void DrawDebugMainWindow(bool& bShow)
 			// Expand tabs in mnemonic (tab stop = 8)
 			std::string strMne;
 			if (pszMnemonic) {
-				int nTab = 8;
+				int nCol = 0;
 				for (const char* p = pszMnemonic; *p != '\0'; p++) {
 					if (*p == '\t') {
-						do { strMne += ' '; } while (--nTab > 0);
-						nTab = 8;
+						int nSpaces = 8 - (nCol % 8);
+						for (int s = 0; s < nSpaces; s++) strMne += ' ';
+						nCol += nSpaces;
 					} else {
 						strMne += *p;
-						if (--nTab <= 0) nTab = 8;
+						nCol++;
 					}
 				}
 			}
@@ -799,14 +793,15 @@ void DrawDisassembleWindow(bool& bShow)
 					// Expand tabs in mnemonic (tab stop = 8)
 					std::string strMne;
 					if (pszMne) {
-						int nTab = 8;
+						int nCol = 0;
 						for (const char* p = pszMne; *p != '\0'; p++) {
 							if (*p == '\t') {
-								do { strMne += ' '; } while (--nTab > 0);
-								nTab = 8;
+								int nSpaces = 8 - (nCol % 8);
+								for (int s = 0; s < nSpaces; s++) strMne += ' ';
+								nCol += nSpaces;
 							} else {
 								strMne += *p;
-								if (--nTab <= 0) nTab = 8;
+								nCol++;
 							}
 						}
 					}
@@ -1028,6 +1023,24 @@ void DrawWriteRamWindow(bool& bShow)
 	ImGui::End();
 }
 
+// Export folder dialog result — may be called from a non-main thread.
+std::string g_strPendingExportDir;
+std::mutex  g_mtxExportDir;
+
+void SDLCALL OnExportFolderSelected(void* userdata, const char* const* filelist, int filter)
+{
+	(void)userdata;
+	(void)filter;
+	if (filelist && filelist[0]) {
+		std::string strDir = filelist[0];
+		if (!strDir.empty() && strDir[strDir.size() - 1] != '/') {
+			strDir += '/';
+		}
+		std::lock_guard<std::mutex> lock(g_mtxExportDir);
+		g_strPendingExportDir = strDir;
+	}
+}
+
 void DrawExportRamWindow(bool& bShow)
 {
 	if (!bShow) {
@@ -1043,6 +1056,7 @@ void DrawExportRamWindow(bool& bShow)
 	static bool bSubRam = true;
 	static bool bExRam0 = false;
 	static bool bExRam1 = false;
+	static std::string strExportDir;
 	static std::string strStatus;
 
 	ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_FirstUseEver);
@@ -1074,13 +1088,32 @@ void DrawExportRamWindow(bool& bShow)
 
 		ImGui::Separator();
 
-		if (ImGui::Button("Export")) {
-			std::string fstrDir;
-			if (!g_vRomSearchDir.empty()) {
-				fstrDir = g_vRomSearchDir[0];
-			} else {
-				fstrDir = "./";
+		// Consume folder dialog result (thread-safe)
+		{
+			std::lock_guard<std::mutex> lock(g_mtxExportDir);
+			if (!g_strPendingExportDir.empty()) {
+				strExportDir = g_strPendingExportDir;
+				g_strPendingExportDir.clear();
 			}
+		}
+		// Folder selection
+		if (strExportDir.empty()) {
+			const char* pHome = getenv("HOME");
+			if (pHome && *pHome) {
+				strExportDir = std::string(pHome) + "/Documents/";
+			} else {
+				strExportDir = "./";
+			}
+		}
+		ImGui::Text("Export to: %s", strExportDir.c_str());
+		if (ImGui::Button("Browse...")) {
+			SDL_ShowOpenFolderDialog(
+				OnExportFolderSelected, NULL,
+				NULL, strExportDir.c_str(), false);
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Export")) {
+			const std::string& fstrDir = strExportDir;
 			int nExported = 0;
 			FILE* fpt;
 			std::string fstrPath;
@@ -1347,6 +1380,151 @@ void OutputCoreDebugLog(int nLogMode)
 				g_nDebugLogCol = 0;
 			}
 		}
+	}
+}
+
+// ---- Debug Window (separate SDL3 window) ----
+
+struct SDebugWindow {
+	SDL_Window*    pWindow;
+	SDL_Renderer*  pRenderer;
+#ifdef X88000_SDL3_HAS_IMGUI
+	ImGuiContext*  pImGuiCtx;
+#endif
+	SDL_WindowID   nWindowID;
+	bool           bOpen;
+	bool           bShowDisasm;
+	bool           bShowMemDump;
+	bool           bShowBreakpoint;
+	bool           bShowWriteRam;
+	bool           bShowExportRam;
+	bool           bNeedInitLayout;
+	std::string    strIniPath;
+};
+
+void InitDebugWindowStruct(SDebugWindow& dw)
+{
+	dw.pWindow = NULL;
+	dw.pRenderer = NULL;
+#ifdef X88000_SDL3_HAS_IMGUI
+	dw.pImGuiCtx = NULL;
+#endif
+	dw.nWindowID = 0;
+	dw.bOpen = false;
+	dw.bShowDisasm = false;
+	dw.bShowMemDump = false;
+	dw.bShowBreakpoint = false;
+	dw.bShowWriteRam = false;
+	dw.bShowExportRam = false;
+	dw.bNeedInitLayout = false;
+	dw.strIniPath.clear();
+}
+
+bool OpenDebugWindow(SDebugWindow& dw, ImGuiContext* pMainCtx)
+{
+	if (dw.bOpen) return true;
+
+	dw.pWindow = SDL_CreateWindow("X88000M Debugger",
+		800, 700, SDL_WINDOW_RESIZABLE);
+	if (!dw.pWindow) return false;
+
+	dw.pRenderer = SDL_CreateRenderer(dw.pWindow, NULL);
+	if (!dw.pRenderer) {
+		SDL_DestroyWindow(dw.pWindow);
+		dw.pWindow = NULL;
+		return false;
+	}
+
+	dw.nWindowID = SDL_GetWindowID(dw.pWindow);
+
+#ifdef X88000_SDL3_HAS_IMGUI
+	// Create an independent ImGui context with its own font atlas,
+	// because the renderer backend binds font textures per-renderer
+	// and a shared atlas would not have a valid texture for this renderer.
+	dw.pImGuiCtx = ImGui::CreateContext();
+	ImGui::SetCurrentContext(dw.pImGuiCtx);
+	ImGuiIO& dbgIO = ImGui::GetIO();
+	// INI path must be set by caller via dw.strIniPath before calling.
+	dbgIO.IniFilename = dw.strIniPath.empty()
+		? NULL : dw.strIniPath.c_str();
+	dbgIO.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+
+	// Load the same font for the debug context.
+	{
+		const char* pBase = SDL_GetBasePath();
+		if (pBase) {
+			std::string sFontPath = std::string(pBase)
+				+ "../Resources/fonts/NotoSansJP-Regular.ttf";
+			ImFontConfig fontCfg;
+			fontCfg.OversampleH = 2;
+			fontCfg.OversampleV = 1;
+			ImFont* pFont = dbgIO.Fonts->AddFontFromFileTTF(
+				sFontPath.c_str(), 20.0f, &fontCfg,
+				dbgIO.Fonts->GetGlyphRangesJapanese());
+			if (!pFont) {
+				dbgIO.Fonts->AddFontDefault();
+			}
+		} else {
+			dbgIO.Fonts->AddFontDefault();
+		}
+	}
+
+	ImGui::StyleColorsDark();
+	ImGui_ImplSDL3_InitForSDLRenderer(dw.pWindow, dw.pRenderer);
+	ImGui_ImplSDLRenderer3_Init(dw.pRenderer);
+	ImGui::SetCurrentContext(pMainCtx);
+#endif
+
+	dw.bOpen = true;
+	dw.bShowDisasm = true;
+	dw.bShowMemDump = true;
+	dw.bShowBreakpoint = true;
+	dw.bShowWriteRam = true;
+	dw.bShowExportRam = true;
+	// Only build initial layout if no saved INI exists.
+	{
+		FILE* fTest = fopen(dw.strIniPath.c_str(), "r");
+		if (fTest) {
+			fclose(fTest);
+			dw.bNeedInitLayout = false;
+		} else {
+			dw.bNeedInitLayout = true;
+		}
+	}
+
+	// Enter debug mode (Main CPU by default)
+	if (!CPC88::IsDebugMode()) {
+		CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_MAIN);
+	}
+	return true;
+}
+
+void CloseDebugWindow(SDebugWindow& dw, ImGuiContext* pMainCtx)
+{
+	if (!dw.bOpen) return;
+
+#ifdef X88000_SDL3_HAS_IMGUI
+	ImGui::SetCurrentContext(dw.pImGuiCtx);
+	ImGui_ImplSDLRenderer3_Shutdown();
+	ImGui_ImplSDL3_Shutdown();
+	// DestroyContext with shared font atlas: ImGui will NOT free the atlas.
+	ImGui::DestroyContext(dw.pImGuiCtx);
+	ImGui::SetCurrentContext(pMainCtx);
+	dw.pImGuiCtx = NULL;
+#endif
+
+	SDL_DestroyRenderer(dw.pRenderer);
+	SDL_DestroyWindow(dw.pWindow);
+	dw.pRenderer = NULL;
+	dw.pWindow = NULL;
+	dw.bOpen = false;
+
+	// Exit debug mode
+	if (CPC88::IsDebugMode()) {
+		CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_NONE);
+	}
+	if (IsDebugLogging()) {
+		EndDebugLog();
 	}
 }
 
@@ -2113,12 +2291,8 @@ int main(int argc, char** argv) {
 	bool bShowEnvWindow = false;
 	bool bShowDiskWindow = false;
 	bool bShowTapeWindow = false;
-	bool bShowDebugWindow = false;
-	bool bShowDisasmWindow = false;
-	bool bShowMemDumpWindow = false;
-	bool bShowBreakpointWindow = false;
-	bool bShowWriteRamWindow = false;
-	bool bShowExportRamWindow = false;
+	SDebugWindow dbgWin;
+	InitDebugWindowStruct(dbgWin);
 	SEnvSettingsView envView;
 	std::vector<uint32_t> vArgbBuffer;
 	const Uint64 nPerfFreq = SDL_GetPerformanceFrequency();
@@ -2238,21 +2412,50 @@ int main(int argc, char** argv) {
 
 	ImGui_ImplSDL3_InitForSDLRenderer(pWindow, pRenderer);
 	ImGui_ImplSDLRenderer3_Init(pRenderer);
+	ImGuiContext* pMainImGuiCtx = ImGui::GetCurrentContext();
 #endif
 
+	SDL_WindowID nMainWindowID = SDL_GetWindowID(pWindow);
 	bool bRunning = true;
 	Uint64 nNextFrameTick = SDL_GetPerformanceCounter();
 	while (bRunning) {
 		SDL_Event evt;
 		while (SDL_PollEvent(&evt)) {
 #ifdef X88000_SDL3_HAS_IMGUI
-			ImGui_ImplSDL3_ProcessEvent(&evt);
+			// Route ImGui events to the correct context by windowID.
+			SDL_WindowID evtWinID = 0;
+			if (evt.type >= SDL_EVENT_WINDOW_FIRST && evt.type <= SDL_EVENT_WINDOW_LAST)
+				evtWinID = evt.window.windowID;
+			else if (evt.type >= SDL_EVENT_KEY_DOWN && evt.type <= SDL_EVENT_KEY_UP)
+				evtWinID = evt.key.windowID;
+			else if (evt.type >= SDL_EVENT_MOUSE_MOTION && evt.type <= SDL_EVENT_MOUSE_WHEEL)
+				evtWinID = evt.motion.windowID;
+			else if (evt.type >= SDL_EVENT_TEXT_EDITING && evt.type <= SDL_EVENT_TEXT_INPUT)
+				evtWinID = evt.text.windowID;
+
+			if (dbgWin.bOpen && evtWinID == dbgWin.nWindowID) {
+				ImGui::SetCurrentContext(dbgWin.pImGuiCtx);
+				ImGui_ImplSDL3_ProcessEvent(&evt);
+				ImGui::SetCurrentContext(pMainImGuiCtx);
+			} else {
+				ImGui_ImplSDL3_ProcessEvent(&evt);
+			}
+
+			// Debug window close
+			if (evt.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED
+				&& dbgWin.bOpen
+				&& evt.window.windowID == dbgWin.nWindowID)
+			{
+				CloseDebugWindow(dbgWin, pMainImGuiCtx);
+			}
 #endif
 				if (evt.type == SDL_EVENT_QUIT) {
 					bRunning = false;
 				}
-				if ((evt.type == SDL_EVENT_KEY_DOWN) &&
-					(evt.key.key == SDLK_ESCAPE))
+				// ESC only quits from main window
+				if ((evt.type == SDL_EVENT_KEY_DOWN)
+					&& (evt.key.key == SDLK_ESCAPE)
+					&& (evt.key.windowID == nMainWindowID))
 				{
 					bRunning = false;
 				}
@@ -2287,26 +2490,30 @@ int main(int argc, char** argv) {
 				if ((evt.type == SDL_EVENT_KEY_DOWN) && !evt.key.repeat) {
 					bool bCtrl = (evt.key.mod & SDL_KMOD_CTRL) != 0;
 					bool bAlt  = (evt.key.mod & SDL_KMOD_ALT) != 0;
-					if (bCtrl && (evt.key.key == SDLK_RETURN)) {
-						ToggleFullscreen(pWindow);
-					} else if (bCtrl && (evt.key.key == SDLK_O)) {
-						RequestOpenMediaDialog(pWindow, -1);
-					} else if (bCtrl && (evt.key.key == SDLK_R)) {
-						ResetCoreState();
-						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
-					} else if (bCtrl && (evt.key.key == SDLK_P)) {
-						bPauseEmulation = !bPauseEmulation;
-						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
-					} else if (bCtrl && (evt.key.key == SDLK_1)) {
-						EjectDiskImageFromDrive(0);
-						SetMediaStatus("Ejected drive 1");
-						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
-					} else if (bCtrl && (evt.key.key == SDLK_2)) {
-						EjectDiskImageFromDrive(1);
-						SetMediaStatus("Ejected drive 2");
-						UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+					bool bIsMainWin = (evt.key.windowID == nMainWindowID);
+					// Ctrl shortcuts: main window only
+					if (bIsMainWin) {
+						if (bCtrl && (evt.key.key == SDLK_RETURN)) {
+							ToggleFullscreen(pWindow);
+						} else if (bCtrl && (evt.key.key == SDLK_O)) {
+							RequestOpenMediaDialog(pWindow, -1);
+						} else if (bCtrl && (evt.key.key == SDLK_R)) {
+							ResetCoreState();
+							UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+						} else if (bCtrl && (evt.key.key == SDLK_P)) {
+							bPauseEmulation = !bPauseEmulation;
+							UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+						} else if (bCtrl && (evt.key.key == SDLK_1)) {
+							EjectDiskImageFromDrive(0);
+							SetMediaStatus("Ejected drive 1");
+							UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+						} else if (bCtrl && (evt.key.key == SDLK_2)) {
+							EjectDiskImageFromDrive(1);
+							SetMediaStatus("Ejected drive 2");
+							UpdateWindowTitle(pWindow, bCoreReady, bPauseEmulation);
+						}
 					}
-					// Debug keyboard accelerators (Alt+F5/F10/F11/F12)
+					// Debug keyboard accelerators: both windows
 					if (bAlt && CPC88::IsDebugMode()) {
 						if (evt.key.key == SDLK_F5) {
 							CPC88::SetDebugStop(
@@ -2335,7 +2542,12 @@ int main(int argc, char** argv) {
 #ifdef X88000_SDL3_HAS_CORE
 		ProcessQueuedMediaFromDialog(pWindow, bCoreReady, bPauseEmulation);
 		if (bCoreReady && !bPauseEmulation) {
-			UpdateKeyMatricsFromSDL();
+			// Only feed keyboard to emulator when main window has focus,
+			// so typing in the debug window doesn't trigger emulated keys.
+			SDL_WindowFlags nMainFlags = SDL_GetWindowFlags(pWindow);
+			if (nMainFlags & SDL_WINDOW_INPUT_FOCUS) {
+				UpdateKeyMatricsFromSDL();
+			}
 			if (!CPC88::IsDebugMode()) {
 				CPC88::Execute(4000000/60);
 			} else if (!CPC88::IsDebugStopped()) {
@@ -2471,59 +2683,26 @@ int main(int argc, char** argv) {
 
 				// ----- Debug menu -----
 				if (ImGui::BeginMenu("Debug", bCoreReady)) {
+					// Open/close debug window (= enter/exit debug mode)
+					if (ImGui::MenuItem("Debug Window...", NULL, dbgWin.bOpen)) {
+						if (dbgWin.bOpen) {
+							CloseDebugWindow(dbgWin, pMainImGuiCtx);
+						} else {
+							// Set INI path next to X88000.ini
+							if (dbgWin.strIniPath.empty()) {
+								const std::string& fpath = settings.GetFilePath();
+								std::string::size_type nSlash = fpath.rfind('/');
+								std::string strDir = (nSlash != std::string::npos)
+									? fpath.substr(0, nSlash + 1) : "./";
+								dbgWin.strIniPath = strDir + "imgui.ini";
+							}
+							OpenDebugWindow(dbgWin, pMainImGuiCtx);
+						}
+					}
+					ImGui::Separator();
+
+					// Record Execution Log
 					bool bDebugMode = CPC88::IsDebugMode();
-					bool bStopped = CPC88::IsDebugStopped() && bDebugMode;
-
-					// 1. CPU target selection
-					bool bDbgMain = CPC88::IsDebugMain();
-					bool bDbgSub  = CPC88::IsDebugSub();
-					if (ImGui::MenuItem("Main CPU Debug", NULL, bDbgMain)) {
-						if (bDbgMain) {
-							CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_NONE);
-							bShowDebugWindow = false;
-						} else {
-							CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_MAIN);
-							bShowDebugWindow = true;
-						}
-					}
-					bool bSubDisabled = CPC88::IsSubSystemDisableNow();
-					ImGui::BeginDisabled(bSubDisabled);
-					if (ImGui::MenuItem("Sub CPU Debug", NULL, bDbgSub)) {
-						if (bDbgSub) {
-							CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_NONE);
-							bShowDebugWindow = false;
-						} else {
-							CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_SUB);
-							bShowDebugWindow = true;
-						}
-					}
-					ImGui::EndDisabled();
-					ImGui::Separator();
-
-					// 2. Execute Debug (run/pause toggle)
-					ImGui::BeginDisabled(!bDebugMode);
-					bool bRunning = bDebugMode && !CPC88::IsDebugStopped();
-					if (ImGui::MenuItem("Execute Debug", "Alt+F5", bRunning)) {
-						CPC88::SetDebugStop(!CPC88::IsDebugStopped());
-					}
-					ImGui::EndDisabled();
-					ImGui::Separator();
-
-					// 3. Step controls
-					ImGui::BeginDisabled(!bStopped);
-					if (ImGui::MenuItem("Execute Step", "Alt+F10")) {
-						CPC88::DebugExecuteStepTrace(CPC88::DEBUGSTEP_STEP);
-					}
-					if (ImGui::MenuItem("Execute Trace", "Alt+F11")) {
-						CPC88::DebugExecuteStepTrace(CPC88::DEBUGSTEP_TRACE);
-					}
-					if (ImGui::MenuItem("Execute Step2", "Alt+F12")) {
-						CPC88::DebugExecuteStepTrace(CPC88::DEBUGSTEP_STEP2);
-					}
-					ImGui::EndDisabled();
-					ImGui::Separator();
-
-					// 4. Record Log & Export RAM
 					ImGui::BeginDisabled(!bDebugMode);
 					bool bLogging = IsDebugLogging();
 					if (ImGui::MenuItem("Record Execution Log", NULL, bLogging)) {
@@ -2534,29 +2713,9 @@ int main(int argc, char** argv) {
 						}
 					}
 					ImGui::EndDisabled();
-					ImGui::BeginDisabled(!bStopped);
-					if (ImGui::MenuItem("Export RAM...", NULL, bShowExportRamWindow)) {
-						bShowExportRamWindow = !bShowExportRamWindow;
-					}
-					ImGui::EndDisabled();
 					ImGui::Separator();
 
-					// 5. Debug sub-windows
-					if (ImGui::MenuItem("Disassemble...", NULL, bShowDisasmWindow)) {
-						bShowDisasmWindow = !bShowDisasmWindow;
-					}
-					if (ImGui::MenuItem("Memory Dump...", NULL, bShowMemDumpWindow)) {
-						bShowMemDumpWindow = !bShowMemDumpWindow;
-					}
-					if (ImGui::MenuItem("Breakpoints...", NULL, bShowBreakpointWindow)) {
-						bShowBreakpointWindow = !bShowBreakpointWindow;
-					}
-					if (ImGui::MenuItem("Write RAM...", NULL, bShowWriteRamWindow)) {
-						bShowWriteRamWindow = !bShowWriteRamWindow;
-					}
-					ImGui::Separator();
-
-					// 6. Audio mute controls
+					// Audio mute controls
 					bool bFmMute  = CPC88::Opna().GetFmMute();
 					bool bSsgMute = CPC88::Opna().GetSsgMute();
 					if (ImGui::MenuItem("Mute FM (all)", NULL, bFmMute)) {
@@ -2630,24 +2789,7 @@ int main(int argc, char** argv) {
 			if (bCoreReady && bShowTapeWindow) {
 				DrawTapeImageManagerWindow(bShowTapeWindow, pWindow);
 			}
-			if (bCoreReady && bShowDebugWindow) {
-				DrawDebugMainWindow(bShowDebugWindow);
-			}
-			if (bCoreReady && bShowDisasmWindow) {
-				DrawDisassembleWindow(bShowDisasmWindow);
-			}
-			if (bCoreReady && bShowMemDumpWindow) {
-				DrawMemoryDumpWindow(bShowMemDumpWindow);
-			}
-			if (bCoreReady && bShowBreakpointWindow) {
-				DrawBreakpointWindow(bShowBreakpointWindow);
-			}
-			if (bCoreReady && bShowWriteRamWindow) {
-				DrawWriteRamWindow(bShowWriteRamWindow);
-			}
-			if (bCoreReady && bShowExportRamWindow) {
-				DrawExportRamWindow(bShowExportRamWindow);
-			}
+			// Debug panels are drawn in the separate debug window below.
 #endif
 			if (bShowStatusWindow) {
 				if (ImGui::Begin("Status", &bShowStatusWindow)) {
@@ -2706,6 +2848,146 @@ int main(int argc, char** argv) {
 
 		SDL_RenderPresent(pRenderer);
 
+		// === Debug window render pass ===
+#if defined(X88000_SDL3_HAS_IMGUI) && defined(X88000_SDL3_HAS_CORE)
+		if (dbgWin.bOpen && bCoreReady) {
+			ImGui::SetCurrentContext(dbgWin.pImGuiCtx);
+			ImGui_ImplSDLRenderer3_NewFrame();
+			ImGui_ImplSDL3_NewFrame();
+			ImGui::NewFrame();
+
+			// Debug window menu bar
+			if (ImGui::BeginMainMenuBar()) {
+				if (ImGui::BeginMenu("Debug")) {
+					// CPU target selection
+					bool bDbgMain = CPC88::IsDebugMain();
+					bool bDbgSub  = CPC88::IsDebugSub();
+					if (ImGui::MenuItem("Main CPU Debug", NULL, bDbgMain)) {
+						if (!bDbgMain) {
+							CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_MAIN);
+						}
+					}
+					bool bSubDisabled = CPC88::IsSubSystemDisableNow();
+					ImGui::BeginDisabled(bSubDisabled);
+					if (ImGui::MenuItem("Sub CPU Debug", NULL, bDbgSub)) {
+						if (!bDbgSub) {
+							CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_SUB);
+						}
+					}
+					ImGui::EndDisabled();
+					ImGui::Separator();
+
+					bool bDebugMode = CPC88::IsDebugMode();
+					bool bStopped = CPC88::IsDebugStopped() && bDebugMode;
+
+					// Execute Debug toggle
+					ImGui::BeginDisabled(!bDebugMode);
+					bool bDbgRunning = bDebugMode && !CPC88::IsDebugStopped();
+					if (ImGui::MenuItem("Execute Debug", "Alt+F5", bDbgRunning)) {
+						CPC88::SetDebugStop(!CPC88::IsDebugStopped());
+					}
+					ImGui::EndDisabled();
+					ImGui::Separator();
+
+					// Step controls
+					ImGui::BeginDisabled(!bStopped);
+					if (ImGui::MenuItem("Execute Step", "Alt+F10")) {
+						CPC88::DebugExecuteStepTrace(CPC88::DEBUGSTEP_STEP);
+					}
+					if (ImGui::MenuItem("Execute Trace", "Alt+F11")) {
+						CPC88::DebugExecuteStepTrace(CPC88::DEBUGSTEP_TRACE);
+					}
+					if (ImGui::MenuItem("Execute Step2", "Alt+F12")) {
+						CPC88::DebugExecuteStepTrace(CPC88::DEBUGSTEP_STEP2);
+					}
+					ImGui::EndDisabled();
+					ImGui::EndMenu();
+				}
+				if (ImGui::BeginMenu("Panels")) {
+					ImGui::MenuItem("Disassemble", NULL, &dbgWin.bShowDisasm);
+					ImGui::MenuItem("Memory Dump", NULL, &dbgWin.bShowMemDump);
+					ImGui::MenuItem("Breakpoints", NULL, &dbgWin.bShowBreakpoint);
+					ImGui::MenuItem("Write RAM", NULL, &dbgWin.bShowWriteRam);
+					ImGui::MenuItem("Export RAM", NULL, &dbgWin.bShowExportRam);
+					ImGui::EndMenu();
+				}
+				ImGui::EndMainMenuBar();
+			}
+
+			// Create a DockSpace covering the entire window (below menu bar)
+			ImGuiID dockID = ImGui::DockSpaceOverViewport(
+				0, ImGui::GetMainViewport(),
+				ImGuiDockNodeFlags_PassthruCentralNode);
+
+			// Build initial layout on first frame (matches GTK-style arrangement).
+			// Once imgui.ini exists, this block is skipped and the saved
+			// layout is used instead.
+			if (dbgWin.bNeedInitLayout) {
+				dbgWin.bNeedInitLayout = false;
+				ImGui::DockBuilderRemoveNode(dockID);
+				ImGui::DockBuilderAddNode(dockID,
+					ImGuiDockNodeFlags_DockSpace);
+				ImGui::DockBuilderSetNodeSize(dockID,
+					ImGui::GetMainViewport()->Size);
+
+				// Split: top 60% / bottom 40%
+				ImGuiID idTop, idBottom;
+				ImGui::DockBuilderSplitNode(dockID,
+					ImGuiDir_Up, 0.60f, &idTop, &idBottom);
+
+				// Top: left 25% (WriteRAM+ExportRAM tabs) | center 40% (Disasm) | right 35% (MemDump)
+				ImGuiID idTopLeft, idTopRest;
+				ImGui::DockBuilderSplitNode(idTop,
+					ImGuiDir_Left, 0.25f, &idTopLeft, &idTopRest);
+				ImGuiID idTopCenter, idTopRight;
+				ImGui::DockBuilderSplitNode(idTopRest,
+					ImGuiDir_Left, 0.53f, &idTopCenter, &idTopRight);
+
+				// Bottom: left 65% (Debugger) | right 35% (Breakpoints)
+				ImGuiID idBotLeft, idBotRight;
+				ImGui::DockBuilderSplitNode(idBottom,
+					ImGuiDir_Left, 0.65f, &idBotLeft, &idBotRight);
+
+				ImGui::DockBuilderDockWindow("Write RAM", idTopLeft);
+				ImGui::DockBuilderDockWindow("Export RAM", idTopLeft);
+				ImGui::DockBuilderDockWindow("Disassemble", idTopCenter);
+				ImGui::DockBuilderDockWindow("Memory Dump", idTopRight);
+				ImGui::DockBuilderDockWindow("Debugger", idBotLeft);
+				ImGui::DockBuilderDockWindow("Breakpoints", idBotRight);
+
+				ImGui::DockBuilderFinish(dockID);
+			}
+
+			// Draw debug panels (user can dock/tab/split these freely)
+			bool bShowMain = true;
+			DrawDebugMainWindow(bShowMain);
+			if (dbgWin.bShowDisasm) {
+				DrawDisassembleWindow(dbgWin.bShowDisasm);
+			}
+			if (dbgWin.bShowMemDump) {
+				DrawMemoryDumpWindow(dbgWin.bShowMemDump);
+			}
+			if (dbgWin.bShowBreakpoint) {
+				DrawBreakpointWindow(dbgWin.bShowBreakpoint);
+			}
+			if (dbgWin.bShowWriteRam) {
+				DrawWriteRamWindow(dbgWin.bShowWriteRam);
+			}
+			if (dbgWin.bShowExportRam) {
+				DrawExportRamWindow(dbgWin.bShowExportRam);
+			}
+
+			ImGui::Render();
+			SDL_SetRenderDrawColor(dbgWin.pRenderer, 30, 30, 30, 255);
+			SDL_RenderClear(dbgWin.pRenderer);
+			ImGui_ImplSDLRenderer3_RenderDrawData(
+				ImGui::GetDrawData(), dbgWin.pRenderer);
+			SDL_RenderPresent(dbgWin.pRenderer);
+
+			ImGui::SetCurrentContext(pMainImGuiCtx);
+		}
+#endif
+
 		if (nFrameTicks > 0) {
 			nNextFrameTick += nFrameTicks;
 			Uint64 nNow = SDL_GetPerformanceCounter();
@@ -2723,14 +3005,17 @@ int main(int argc, char** argv) {
 	}
 
 #ifdef X88000_SDL3_HAS_IMGUI
+	// Close debug window before destroying main ImGui context.
+	if (dbgWin.bOpen) {
+		CloseDebugWindow(dbgWin, pMainImGuiCtx);
+	}
 	ImGui_ImplSDLRenderer3_Shutdown();
 	ImGui_ImplSDL3_Shutdown();
 	ImGui::DestroyContext();
 #endif
 
 #ifdef X88000_SDL3_HAS_CORE
-	// Clean up debug state before saving settings, since debug
-	// execution can alter heap layout and corrupt EnvFile nodes.
+	// Clean up debug state before saving settings.
 	if (CPC88::IsDebugMode()) {
 		CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_NONE);
 	}
