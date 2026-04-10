@@ -1,6 +1,7 @@
 ////////////////////////////////////////////////////////////
 // SDL3 frontend persistent settings — implementation
 
+#include "StdHeader.h"
 #include "Sdl3Settings.h"
 
 #include <cstdio>
@@ -118,6 +119,14 @@ bool CSdl3Settings::Save()
 	m_envFile.Open(m_strFilePath);
 	m_bOpen = true;
 	return true;
+}
+
+void CSdl3Settings::Close()
+{
+	if (m_bOpen) {
+		m_envFile.Close();
+		m_bOpen = false;
+	}
 }
 
 std::string CSdl3Settings::GetSectionString(const std::string& strSection, const std::string& strKey, const std::string& strDefault)

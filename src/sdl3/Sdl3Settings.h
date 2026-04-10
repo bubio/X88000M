@@ -28,6 +28,9 @@ public:
 	// Flush pending changes back to disk. Re-opens the file afterwards
 	// so subsequent Get*() / Set*() calls keep working.
 	bool Save();
+	// Close the underlying env file. After this, Get/Set calls are no-ops
+	// and the destructor will not attempt to traverse the list.
+	void Close();
 
 	// Typed accessors. Missing keys return the supplied default.
 	std::string GetString(const std::string& strKey, const std::string& strDefault = "");

@@ -2728,6 +2728,17 @@ int main(int argc, char** argv) {
 	ImGui::DestroyContext();
 #endif
 
+#ifdef X88000_SDL3_HAS_CORE
+	// Clean up debug state before saving settings, since debug
+	// execution can alter heap layout and corrupt EnvFile nodes.
+	if (CPC88::IsDebugMode()) {
+		CPC88::SetDebugExecMode(CPC88::DEBUGEXEC_NONE);
+	}
+	if (IsDebugLogging()) {
+		EndDebugLog();
+	}
+#endif
+
 	{
 		// Persist window size only when we are not currently in fullscreen,
 		// so that "fullscreen at exit" doesn't overwrite the windowed size.
