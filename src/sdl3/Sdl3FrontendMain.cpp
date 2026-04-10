@@ -1383,6 +1383,38 @@ void OutputCoreDebugLog(int nLogMode)
 	}
 }
 
+void ApplyTintStyle()
+{
+	ImVec4 tint(141/255.0f, 105/255.0f, 96/255.0f, 1.0f);
+	ImVec4 tintDim(tint.x * 0.6f, tint.y * 0.6f, tint.z * 0.6f, 1.0f);
+	ImVec4 tintBright(
+		tint.x + (1.0f - tint.x) * 0.3f,
+		tint.y + (1.0f - tint.y) * 0.3f,
+		tint.z + (1.0f - tint.z) * 0.3f, 1.0f);
+	ImGuiStyle& style = ImGui::GetStyle();
+	style.Colors[ImGuiCol_TitleBg]          = tintDim;
+	style.Colors[ImGuiCol_TitleBgActive]    = tint;
+	style.Colors[ImGuiCol_Header]           = ImVec4(tint.x, tint.y, tint.z, 0.5f);
+	style.Colors[ImGuiCol_HeaderHovered]    = ImVec4(tint.x, tint.y, tint.z, 0.7f);
+	style.Colors[ImGuiCol_HeaderActive]     = tint;
+	style.Colors[ImGuiCol_Button]           = ImVec4(tint.x, tint.y, tint.z, 0.5f);
+	style.Colors[ImGuiCol_ButtonHovered]    = ImVec4(tint.x, tint.y, tint.z, 0.7f);
+	style.Colors[ImGuiCol_ButtonActive]     = tintBright;
+	style.Colors[ImGuiCol_FrameBg]          = ImVec4(tintDim.x, tintDim.y, tintDim.z, 0.5f);
+	style.Colors[ImGuiCol_FrameBgHovered]   = ImVec4(tint.x, tint.y, tint.z, 0.4f);
+	style.Colors[ImGuiCol_FrameBgActive]    = ImVec4(tint.x, tint.y, tint.z, 0.6f);
+	style.Colors[ImGuiCol_CheckMark]        = tintBright;
+	style.Colors[ImGuiCol_SliderGrab]       = tint;
+	style.Colors[ImGuiCol_SliderGrabActive] = tintBright;
+	style.Colors[ImGuiCol_Tab]                    = tintDim;
+	style.Colors[ImGuiCol_TabHovered]             = tint;
+	style.Colors[ImGuiCol_TabSelected]            = tint;
+	style.Colors[ImGuiCol_TabDimmed]              = ImVec4(tintDim.x * 0.6f, tintDim.y * 0.6f, tintDim.z * 0.6f, 1.0f);
+	style.Colors[ImGuiCol_TabDimmedSelected]      = tintDim;
+	style.Colors[ImGuiCol_TabSelectedOverline]    = tintBright;
+	style.Colors[ImGuiCol_TabDimmedSelectedOverline] = tint;
+}
+
 // ---- Debug Window (separate SDL3 window) ----
 
 struct SDebugWindow {
@@ -1420,12 +1452,22 @@ void InitDebugWindowStruct(SDebugWindow& dw)
 	dw.strIniPath.clear();
 }
 
-bool OpenDebugWindow(SDebugWindow& dw, ImGuiContext* pMainCtx)
+bool OpenDebugWindow(SDebugWindow& dw, ImGuiContext* pMainCtx,
+	CSdl3Settings& settings)
 {
 	if (dw.bOpen) return true;
 
+	int nDbgW = settings.GetInt("dbgwindow.width", 800);
+	int nDbgH = settings.GetInt("dbgwindow.height", 700);
+	int nDbgX = settings.GetInt("dbgwindow.x", SDL_WINDOWPOS_CENTERED);
+	int nDbgY = settings.GetInt("dbgwindow.y", SDL_WINDOWPOS_CENTERED);
+	if (nDbgW < 400) nDbgW = 400;
+	if (nDbgH < 300) nDbgH = 300;
 	dw.pWindow = SDL_CreateWindow("X88000M Debugger",
-		800, 700, SDL_WINDOW_RESIZABLE);
+		nDbgW, nDbgH, SDL_WINDOW_RESIZABLE);
+	if (dw.pWindow && nDbgX != SDL_WINDOWPOS_CENTERED) {
+		SDL_SetWindowPosition(dw.pWindow, nDbgX, nDbgY);
+	}
 	if (!dw.pWindow) return false;
 
 	dw.pRenderer = SDL_CreateRenderer(dw.pWindow, NULL);
@@ -1470,6 +1512,7 @@ bool OpenDebugWindow(SDebugWindow& dw, ImGuiContext* pMainCtx)
 	}
 
 	ImGui::StyleColorsDark();
+	ApplyTintStyle();
 	ImGui_ImplSDL3_InitForSDLRenderer(dw.pWindow, dw.pRenderer);
 	ImGui_ImplSDLRenderer3_Init(dw.pRenderer);
 	ImGui::SetCurrentContext(pMainCtx);
@@ -1499,9 +1542,23 @@ bool OpenDebugWindow(SDebugWindow& dw, ImGuiContext* pMainCtx)
 	return true;
 }
 
-void CloseDebugWindow(SDebugWindow& dw, ImGuiContext* pMainCtx)
+void CloseDebugWindow(SDebugWindow& dw, ImGuiContext* pMainCtx,
+	CSdl3Settings& settings)
 {
 	if (!dw.bOpen) return;
+
+	// Persist debug window size and position
+	{
+		int nW = 0, nH = 0, nX = 0, nY = 0;
+		SDL_GetWindowSize(dw.pWindow, &nW, &nH);
+		SDL_GetWindowPosition(dw.pWindow, &nX, &nY);
+		if (nW > 0 && nH > 0) {
+			settings.SetInt("dbgwindow.width", nW);
+			settings.SetInt("dbgwindow.height", nH);
+			settings.SetInt("dbgwindow.x", nX);
+			settings.SetInt("dbgwindow.y", nY);
+		}
+	}
 
 #ifdef X88000_SDL3_HAS_IMGUI
 	ImGui::SetCurrentContext(dw.pImGuiCtx);
@@ -2335,15 +2392,20 @@ int main(int argc, char** argv) {
 	}
 #endif
 
-	int nInitialWindowW = settings.GetInt("window.width", 1024);
-	int nInitialWindowH = settings.GetInt("window.height", 768);
+	int nInitialWindowW = settings.GetInt("window.width", 640);
+	int nInitialWindowH = settings.GetInt("window.height", 428);
 	if (nInitialWindowW < 320) { nInitialWindowW = 320; }
 	if (nInitialWindowH < 240) { nInitialWindowH = 240; }
+	int nInitialWindowX = settings.GetInt("window.x", SDL_WINDOWPOS_CENTERED);
+	int nInitialWindowY = settings.GetInt("window.y", SDL_WINDOWPOS_CENTERED);
 	SDL_Window* pWindow = SDL_CreateWindow(
 		"X88000 SDL3 Frontend (Prototype)",
 		nInitialWindowW,
 		nInitialWindowH,
 		SDL_WINDOW_RESIZABLE);
+	if (pWindow && nInitialWindowX != SDL_WINDOWPOS_CENTERED) {
+		SDL_SetWindowPosition(pWindow, nInitialWindowX, nInitialWindowY);
+	}
 	if (pWindow == NULL) {
 		fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
 		SDL_Quit();
@@ -2383,6 +2445,7 @@ int main(int argc, char** argv) {
 	ImGuiIO& io = ImGui::GetIO();
 	(void)io;
 	ImGui::StyleColorsDark();
+	ApplyTintStyle();
 
 	// Load Noto Sans JP from the app bundle's Resources/fonts/ so that
 	// Japanese text renders correctly in ImGui menus and dialogs. Falls
@@ -2446,7 +2509,7 @@ int main(int argc, char** argv) {
 				&& dbgWin.bOpen
 				&& evt.window.windowID == dbgWin.nWindowID)
 			{
-				CloseDebugWindow(dbgWin, pMainImGuiCtx);
+				CloseDebugWindow(dbgWin, pMainImGuiCtx, settings);
 			}
 #endif
 				if (evt.type == SDL_EVENT_QUIT) {
@@ -2686,7 +2749,7 @@ int main(int argc, char** argv) {
 					// Open/close debug window (= enter/exit debug mode)
 					if (ImGui::MenuItem("Debug Window...", NULL, dbgWin.bOpen)) {
 						if (dbgWin.bOpen) {
-							CloseDebugWindow(dbgWin, pMainImGuiCtx);
+							CloseDebugWindow(dbgWin, pMainImGuiCtx, settings);
 						} else {
 							// Set INI path next to X88000.ini
 							if (dbgWin.strIniPath.empty()) {
@@ -2696,7 +2759,7 @@ int main(int argc, char** argv) {
 									? fpath.substr(0, nSlash + 1) : "./";
 								dbgWin.strIniPath = strDir + "imgui.ini";
 							}
-							OpenDebugWindow(dbgWin, pMainImGuiCtx);
+							OpenDebugWindow(dbgWin, pMainImGuiCtx, settings);
 						}
 					}
 					ImGui::Separator();
@@ -2828,6 +2891,9 @@ int main(int argc, char** argv) {
 				}
 				ImGui::End();
 			}
+			// Save menu bar height before Render() finalizes the frame.
+			float fMenuBarH = ImGui::GetFrameHeight()
+				+ ImGui::GetStyle().FramePadding.y;
 			ImGui::Render();
 #endif
 
@@ -2838,7 +2904,16 @@ int main(int argc, char** argv) {
 				int nWindowW = 0;
 				int nWindowH = 0;
 				SDL_GetRenderOutputSize(pRenderer, &nWindowW, &nWindowH);
+#ifdef X88000_SDL3_HAS_IMGUI
+				// Offset below the ImGui menu bar
+				float fScale = SDL_GetWindowDisplayScale(pWindow);
+				float fMenuPx = fMenuBarH * fScale;
+				SDL_FRect rctDst = CalcLetterboxRect(
+					nWindowW, (int)(nWindowH - fMenuPx), 640, 400);
+				rctDst.y += fMenuPx;
+#else
 				SDL_FRect rctDst = CalcLetterboxRect(nWindowW, nWindowH, 640, 400);
+#endif
 				SDL_RenderTexture(pRenderer, pFrameTexture, NULL, &rctDst);
 			}
 
@@ -3007,7 +3082,7 @@ int main(int argc, char** argv) {
 #ifdef X88000_SDL3_HAS_IMGUI
 	// Close debug window before destroying main ImGui context.
 	if (dbgWin.bOpen) {
-		CloseDebugWindow(dbgWin, pMainImGuiCtx);
+		CloseDebugWindow(dbgWin, pMainImGuiCtx, settings);
 	}
 	ImGui_ImplSDLRenderer3_Shutdown();
 	ImGui_ImplSDL3_Shutdown();
@@ -3031,12 +3106,15 @@ int main(int argc, char** argv) {
 		SDL_WindowFlags nWindowFlags = SDL_GetWindowFlags(pWindow);
 		bool bExitFullscreen = (nWindowFlags & SDL_WINDOW_FULLSCREEN) != 0;
 		if (!bExitFullscreen) {
-			int nExitW = 0;
-			int nExitH = 0;
+			int nExitW = 0, nExitH = 0;
+			int nExitX = 0, nExitY = 0;
 			SDL_GetWindowSize(pWindow, &nExitW, &nExitH);
+			SDL_GetWindowPosition(pWindow, &nExitX, &nExitY);
 			if ((nExitW > 0) && (nExitH > 0)) {
 				settings.SetInt("window.width", nExitW);
 				settings.SetInt("window.height", nExitH);
+				settings.SetInt("window.x", nExitX);
+				settings.SetInt("window.y", nExitY);
 			}
 		}
 		settings.Save();

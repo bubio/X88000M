@@ -172,6 +172,13 @@ if(X88000M_BUILD_SDL3_FRONTEND)
 				target_sources(X88000SDL3 PRIVATE
 					${X88000_BUNDLE_RESOURCES}
 					${X88000_FONT_RESOURCES})
+				# App icon
+				set(X88000_ICON_FILE "${CMAKE_SOURCE_DIR}/resources/AppIcon.icns")
+				if(EXISTS "${X88000_ICON_FILE}")
+					set_source_files_properties("${X88000_ICON_FILE}" PROPERTIES
+						MACOSX_PACKAGE_LOCATION Resources)
+					target_sources(X88000SDL3 PRIVATE "${X88000_ICON_FILE}")
+				endif()
 				set_target_properties(X88000SDL3 PROPERTIES
 					MACOSX_BUNDLE_INFO_PLIST
 						"${X88000_CMAKE_DIR}/Info.plist.in"
@@ -180,7 +187,8 @@ if(X88000M_BUILD_SDL3_FRONTEND)
 					MACOSX_BUNDLE_COPYRIGHT "Original X88000 by Manuke; repository maintenance by bubio"
 					MACOSX_BUNDLE_GUI_IDENTIFIER "com.github.bubio.x88000m.sdl3"
 					MACOSX_BUNDLE_LONG_VERSION_STRING "X88000M SDL3 0.1.0"
-					MACOSX_BUNDLE_SHORT_VERSION_STRING "0.1.0")
+					MACOSX_BUNDLE_SHORT_VERSION_STRING "0.1.0"
+					MACOSX_BUNDLE_ICON_FILE "AppIcon")
 			endif()
 
 		set(X88000M_IMGUI_SOURCE_DIR "")
