@@ -1477,10 +1477,22 @@ void DrawExportRamWindow(bool& bShow)
 	ImGui::End();
 }
 
+// Forward declaration
+#ifdef X88000_SDL3_HAS_IMGUI
+void ApplyTintStyle();
+#endif
+
 // ---- Printer Preview ----
 
 struct SPrinterPreview {
-	SDL_Texture* pTexture;
+	SDL_Window*    pWindow;
+	SDL_Renderer*  pRenderer;
+#ifdef X88000_SDL3_HAS_IMGUI
+	ImGuiContext*  pImGuiCtx;
+#endif
+	SDL_WindowID   nWindowID;
+	bool           bOpen;
+	SDL_Texture*   pTexture;
 	int nTexW;
 	int nTexH;
 	int nPage;
@@ -1490,6 +1502,13 @@ struct SPrinterPreview {
 
 void InitPrinterPreview(SPrinterPreview& pp)
 {
+	pp.pWindow = NULL;
+	pp.pRenderer = NULL;
+#ifdef X88000_SDL3_HAS_IMGUI
+	pp.pImGuiCtx = NULL;
+#endif
+	pp.nWindowID = 0;
+	pp.bOpen = false;
 	pp.pTexture = NULL;
 	pp.nTexW = 0;
 	pp.nTexH = 0;
@@ -1498,12 +1517,83 @@ void InitPrinterPreview(SPrinterPreview& pp)
 	pp.bDirty = true;
 }
 
-void DestroyPrinterPreview(SPrinterPreview& pp)
+bool OpenPrinterWindow(SPrinterPreview& pp, ImGuiContext* pMainCtx)
 {
+	if (pp.bOpen) return true;
+
+	pp.pWindow = SDL_CreateWindow("X88000M Printer Preview",
+		600, 700, SDL_WINDOW_RESIZABLE);
+	if (!pp.pWindow) return false;
+
+	pp.pRenderer = SDL_CreateRenderer(pp.pWindow, NULL);
+	if (!pp.pRenderer) {
+		SDL_DestroyWindow(pp.pWindow);
+		pp.pWindow = NULL;
+		return false;
+	}
+	pp.nWindowID = SDL_GetWindowID(pp.pWindow);
+
+#ifdef X88000_SDL3_HAS_IMGUI
+	pp.pImGuiCtx = ImGui::CreateContext();
+	ImGui::SetCurrentContext(pp.pImGuiCtx);
+	ImGuiIO& prtIO = ImGui::GetIO();
+	prtIO.IniFilename = NULL;
+	prtIO.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+
+	// Load font
+	{
+		const char* pBase = SDL_GetBasePath();
+		if (pBase) {
+			std::string sFontPath = std::string(pBase)
+				+ "../Resources/fonts/NotoSansJP-Regular.ttf";
+			ImFontConfig fontCfg;
+			fontCfg.OversampleH = 2;
+			fontCfg.OversampleV = 1;
+			ImFont* pFont = prtIO.Fonts->AddFontFromFileTTF(
+				sFontPath.c_str(), 20.0f, &fontCfg,
+				prtIO.Fonts->GetGlyphRangesJapanese());
+			if (!pFont) {
+				prtIO.Fonts->AddFontDefault();
+			}
+		} else {
+			prtIO.Fonts->AddFontDefault();
+		}
+	}
+
+	ImGui::StyleColorsDark();
+	ApplyTintStyle();
+	ImGui_ImplSDL3_InitForSDLRenderer(pp.pWindow, pp.pRenderer);
+	ImGui_ImplSDLRenderer3_Init(pp.pRenderer);
+	ImGui::SetCurrentContext(pMainCtx);
+#endif
+
+	pp.bOpen = true;
+	pp.bDirty = true;
+	return true;
+}
+
+void ClosePrinterWindow(SPrinterPreview& pp, ImGuiContext* pMainCtx)
+{
+	if (!pp.bOpen) return;
+
+#ifdef X88000_SDL3_HAS_IMGUI
+	ImGui::SetCurrentContext(pp.pImGuiCtx);
+	ImGui_ImplSDLRenderer3_Shutdown();
+	ImGui_ImplSDL3_Shutdown();
+	ImGui::DestroyContext(pp.pImGuiCtx);
+	ImGui::SetCurrentContext(pMainCtx);
+	pp.pImGuiCtx = NULL;
+#endif
+
 	if (pp.pTexture) {
 		SDL_DestroyTexture(pp.pTexture);
 		pp.pTexture = NULL;
 	}
+	SDL_DestroyRenderer(pp.pRenderer);
+	SDL_DestroyWindow(pp.pWindow);
+	pp.pRenderer = NULL;
+	pp.pWindow = NULL;
+	pp.bOpen = false;
 }
 
 void RebuildPrinterTexture(SPrinterPreview& pp,
@@ -1742,13 +1832,10 @@ static const char* s_aszPaperNames[] = {
 	"Postcard Portrait", "Postcard Landscape"
 };
 
-void DrawPrinterPreviewWindow(bool& bShow, SPrinterPreview& pp,
-	SDL_Renderer* pRenderer)
+void DrawPrinterPreviewContent(SPrinterPreview& pp)
 {
-	if (!bShow) return;
 
-	ImGui::SetNextWindowSize(ImVec2(500, 500), ImGuiCond_FirstUseEver);
-	if (ImGui::Begin("Printer Preview", &bShow, ImGuiWindowFlags_NoCollapse)) {
+	if (ImGui::Begin("Printer Preview", NULL, ImGuiWindowFlags_NoCollapse)) {
 		CParallelPrinter* pPrinter = NULL;
 		if (g_nParallelDevice == 1) {
 			pPrinter = &g_parallelPR201;
@@ -1838,7 +1925,7 @@ void DrawPrinterPreviewWindow(bool& bShow, SPrinterPreview& pp,
 
 			// Rebuild texture if needed
 			if (pp.bDirty && pPrinter->GetPaperWidth() > 0) {
-				RebuildPrinterTexture(pp, pRenderer, *pPrinter);
+				RebuildPrinterTexture(pp, pp.pRenderer, *pPrinter);
 			}
 
 			// Preview area with scroll
@@ -2988,7 +3075,6 @@ int main(int argc, char** argv) {
 	bool bShowEnvWindow = false;
 	bool bShowDiskWindow = false;
 	bool bShowTapeWindow = false;
-	bool bShowPrinterWindow = false;
 	SPrinterPreview printerPreview;
 	InitPrinterPreview(printerPreview);
 	SDebugWindow dbgWin;
@@ -3144,6 +3230,10 @@ int main(int argc, char** argv) {
 				ImGui::SetCurrentContext(dbgWin.pImGuiCtx);
 				ImGui_ImplSDL3_ProcessEvent(&evt);
 				ImGui::SetCurrentContext(pMainImGuiCtx);
+			} else if (printerPreview.bOpen && evtWinID == printerPreview.nWindowID) {
+				ImGui::SetCurrentContext(printerPreview.pImGuiCtx);
+				ImGui_ImplSDL3_ProcessEvent(&evt);
+				ImGui::SetCurrentContext(pMainImGuiCtx);
 			} else {
 				ImGui_ImplSDL3_ProcessEvent(&evt);
 			}
@@ -3154,6 +3244,13 @@ int main(int argc, char** argv) {
 				&& evt.window.windowID == dbgWin.nWindowID)
 			{
 				CloseDebugWindow(dbgWin, pMainImGuiCtx, settings);
+			}
+			// Printer window close
+			if (evt.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED
+				&& printerPreview.bOpen
+				&& evt.window.windowID == printerPreview.nWindowID)
+			{
+				ClosePrinterWindow(printerPreview, pMainImGuiCtx);
 			}
 #endif
 				if (evt.type == SDL_EVENT_QUIT) {
@@ -3431,8 +3528,12 @@ int main(int argc, char** argv) {
 							}
 						}
 						ImGui::Separator();
-						if (ImGui::MenuItem("Printer Preview...", NULL, bShowPrinterWindow)) {
-							bShowPrinterWindow = !bShowPrinterWindow;
+						if (ImGui::MenuItem("Printer Preview...", NULL, printerPreview.bOpen)) {
+							if (printerPreview.bOpen) {
+								ClosePrinterWindow(printerPreview, pMainImGuiCtx);
+							} else {
+								OpenPrinterWindow(printerPreview, pMainImGuiCtx);
+							}
 						}
 						ImGui::EndMenu();
 					}
@@ -3583,9 +3684,7 @@ int main(int argc, char** argv) {
 			if (bCoreReady && bShowTapeWindow) {
 				DrawTapeImageManagerWindow(bShowTapeWindow, pWindow);
 			}
-			if (bCoreReady && bShowPrinterWindow) {
-				DrawPrinterPreviewWindow(bShowPrinterWindow, printerPreview, pRenderer);
-			}
+			// Printer preview is drawn in its own window below.
 			// Debug panels are drawn in the separate debug window below.
 #endif
 			if (bShowStatusWindow) {
@@ -3808,6 +3907,25 @@ int main(int argc, char** argv) {
 
 			ImGui::SetCurrentContext(pMainImGuiCtx);
 		}
+
+		// === Printer preview window render pass ===
+		if (printerPreview.bOpen && bCoreReady) {
+			ImGui::SetCurrentContext(printerPreview.pImGuiCtx);
+			ImGui_ImplSDLRenderer3_NewFrame();
+			ImGui_ImplSDL3_NewFrame();
+			ImGui::NewFrame();
+
+			DrawPrinterPreviewContent(printerPreview);
+
+			ImGui::Render();
+			SDL_SetRenderDrawColor(printerPreview.pRenderer, 30, 30, 30, 255);
+			SDL_RenderClear(printerPreview.pRenderer);
+			ImGui_ImplSDLRenderer3_RenderDrawData(
+				ImGui::GetDrawData(), printerPreview.pRenderer);
+			SDL_RenderPresent(printerPreview.pRenderer);
+
+			ImGui::SetCurrentContext(pMainImGuiCtx);
+		}
 #endif
 
 		if (!bBoostMode && nFrameTicks > 0) {
@@ -3845,7 +3963,10 @@ int main(int argc, char** argv) {
 	}
 
 #ifdef X88000_SDL3_HAS_IMGUI
-	// Close debug window before destroying main ImGui context.
+	// Close sub-windows before destroying main ImGui context.
+	if (printerPreview.bOpen) {
+		ClosePrinterWindow(printerPreview, pMainImGuiCtx);
+	}
 	if (dbgWin.bOpen) {
 		CloseDebugWindow(dbgWin, pMainImGuiCtx, settings);
 	}
@@ -3885,7 +4006,6 @@ int main(int argc, char** argv) {
 		settings.Save();
 	}
 
-	DestroyPrinterPreview(printerPreview);
 	SDL_DestroyTexture(pFrameTexture);
 	SDL_DestroyRenderer(pRenderer);
 	SDL_DestroyWindow(pWindow);
