@@ -28,7 +28,7 @@ public:
 	virtual ~CX88PrinterDrawer();
 
 // operation
-protected:
+public:
 
 	// set point
 	static void SetPoint(int anPoint[2], int x, int y) {
@@ -41,6 +41,10 @@ protected:
 		int anPoints[64][2],
 		int anPointCounts[16],
 		int& nPolygonCount, int& nTotal);
+
+protected:
+
+#ifndef X88_PRINTER_DRAW_NO_BACKEND
 
 #ifdef X88_GUI_WINDOWS
 
@@ -179,6 +183,10 @@ public:
 #endif // X88_PRINTER_DRAW
 
 #endif // X88_GUI
+
+#endif // X88_PRINTER_DRAW_NO_BACKEND
+
+public:
 
 	// extract text
 	virtual void ExtractText(

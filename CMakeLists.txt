@@ -39,6 +39,7 @@ set(X88000_CORE_SOURCES
 	"${X88000_SRC_DIR}/ParallelNull.cpp"
 	"${X88000_SRC_DIR}/ParallelPR201.cpp"
 	"${X88000_SRC_DIR}/ParallelPrinter.cpp"
+	"${X88000_SRC_DIR}/X88PrinterDrawerCGData.cpp"
 	"${X88000_SRC_DIR}/PC88.cpp"
 	"${X88000_SRC_DIR}/PC88Calendar.cpp"
 	"${X88000_SRC_DIR}/PC88Crtc.cpp"
@@ -66,6 +67,7 @@ if(X88000M_BUILD_SDL3_FRONTEND AND X88000M_GTK2_READY)
 	add_library(x88core STATIC ${X88000_CORE_SOURCES})
 	target_include_directories(x88core PUBLIC "${X88000_SRC_DIR}")
 	target_link_libraries(x88core PUBLIC PkgConfig::GTK2)
+	target_compile_definitions(x88core PUBLIC X88_PRINTER_DRAW_NO_BACKEND=1)
 	set_target_properties(x88core PROPERTIES
 		CXX_STANDARD 11
 		CXX_STANDARD_REQUIRED ON

@@ -8,6 +8,7 @@
 #include "X88DiskImageMemory.h"
 #include "ParallelNull.h"
 #include "ParallelPR201.h"
+#include "X88PrinterDrawer.h"
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -1492,10 +1493,6 @@ struct SPrinterPreview {
 #endif
 	SDL_WindowID   nWindowID;
 	bool           bOpen;
-	// Cached font atlas pixel data for glyph rendering
-	unsigned char* pFontAtlasPixels;
-	int            nFontAtlasW;
-	int            nFontAtlasH;
 	SDL_Texture*   pTexture;
 	int nTexW;
 	int nTexH;
@@ -1513,9 +1510,6 @@ void InitPrinterPreview(SPrinterPreview& pp)
 #endif
 	pp.nWindowID = 0;
 	pp.bOpen = false;
-	pp.pFontAtlasPixels = NULL;
-	pp.nFontAtlasW = 0;
-	pp.nFontAtlasH = 0;
 	pp.pTexture = NULL;
 	pp.nTexW = 0;
 	pp.nTexH = 0;
@@ -1602,6 +1596,88 @@ void ClosePrinterWindow(SPrinterPreview& pp, ImGuiContext* pMainCtx)
 	pp.pRenderer = NULL;
 	pp.pWindow = NULL;
 	pp.bOpen = false;
+}
+
+// Scanline fill for CG character polygons.
+// Fills multiple polygons (even-odd rule) into the pixel buffer.
+// Polygon points are in a local coordinate system; pFnMapX/pFnMapY map
+// to destination pixel coordinates.
+static void FillCGPolygons(
+	uint32_t* pPixels, int nTexW, int nTexH,
+	const int anPoints[64][2],
+	const int anPointCounts[16],
+	int nPolygonCount,
+	int xDst, int yDst, int cxDst, int cyDst,
+	uint32_t color)
+{
+	if (nPolygonCount <= 0) return;
+	if (cxDst <= 0 || cyDst <= 0) return;
+
+	// Transform all points to destination space up-front.
+	int axDst[64], ayDst[64];
+	int nTotal = 0;
+	for (int p = 0; p < nPolygonCount; p++) nTotal += anPointCounts[p];
+	if (nTotal > 64) nTotal = 64;
+	for (int i = 0; i < nTotal; i++) {
+		axDst[i] = xDst + (anPoints[i][0] * cxDst + 8) / 16;
+		ayDst[i] = yDst + (anPoints[i][1] * cyDst + 12) / 24;
+	}
+
+	// Compute Y bounds.
+	int yMin = ayDst[0], yMax = ayDst[0];
+	for (int i = 1; i < nTotal; i++) {
+		if (ayDst[i] < yMin) yMin = ayDst[i];
+		if (ayDst[i] > yMax) yMax = ayDst[i];
+	}
+	if (yMin < 0) yMin = 0;
+	if (yMax >= nTexH) yMax = nTexH - 1;
+	if (yMin > yMax) return;
+
+	for (int y = yMin; y <= yMax; y++) {
+		int aXCross[64];
+		int nCross = 0;
+		int nBase = 0;
+		for (int p = 0; p < nPolygonCount; p++) {
+			int nCount = anPointCounts[p];
+			for (int i = 0; i < nCount; i++) {
+				int i0 = nBase + i;
+				int i1 = nBase + ((i + 1) % nCount);
+				int y0 = ayDst[i0];
+				int y1 = ayDst[i1];
+				if (y0 == y1) continue;
+				int yLo = y0 < y1 ? y0 : y1;
+				int yHi = y0 < y1 ? y1 : y0;
+				// Use half-open interval [yLo, yHi) to avoid
+				// double-counting vertices.
+				if (y < yLo || y >= yHi) continue;
+				int x0 = axDst[i0];
+				int x1 = axDst[i1];
+				int xCross = x0 + (int)((int64_t)(x1 - x0) * (y - y0) / (y1 - y0));
+				if (nCross < 64) aXCross[nCross++] = xCross;
+			}
+			nBase += nCount;
+		}
+		// Sort crossings.
+		for (int i = 1; i < nCross; i++) {
+			int v = aXCross[i];
+			int j = i - 1;
+			while (j >= 0 && aXCross[j] > v) {
+				aXCross[j + 1] = aXCross[j];
+				j--;
+			}
+			aXCross[j + 1] = v;
+		}
+		// Fill even-odd pairs.
+		for (int i = 0; i + 1 < nCross; i += 2) {
+			int xA = aXCross[i];
+			int xB = aXCross[i + 1];
+			if (xA < 0) xA = 0;
+			if (xB > nTexW) xB = nTexW;
+			for (int x = xA; x < xB; x++) {
+				pPixels[y * nTexW + x] = color;
+			}
+		}
+	}
 }
 
 void RebuildPrinterTexture(SPrinterPreview& pp,
@@ -1742,17 +1818,68 @@ void RebuildPrinterTexture(SPrinterPreview& pp,
 				if (oh < 1) oh = 1;
 				int nLen = pTxt->GetTextLength();
 				int xCur = ox;
+				int nGaijiIndex = 0;
 
 				for (int i = 0; i < nLen; i++) {
 					int cw = (int)(pTxt->GetCharWidth(i) * fScaleX);
 					if (cw < 1) cw = 1;
 					uint16_t wText = pTxt->GetText()[i];
+					int nCharType = pTxt->GetCharType(i);
+
+					if (nCharType == CPrinterTextObject::CHAR_CG) {
+						int anPoints[64][2];
+						int anPointCounts[16];
+						int nPolygonCount = 0, nTotalPts = 0;
+						CX88PrinterDrawer::GetCGCharacterData(
+							wText, anPoints, anPointCounts,
+							nPolygonCount, nTotalPts);
+						if (nPolygonCount > 0) {
+							FillCGPolygons(
+								&vPixels[0], nTexW, nTexH,
+								anPoints, anPointCounts, nPolygonCount,
+								xCur, oy, cw, oh, 0xFF000000);
+						}
+						xCur += cw + (int)(pTxt->GetRightGap(i) * fScaleX);
+						continue;
+					}
+
+					if (nCharType == CPrinterTextObject::CHAR_GAIJI) {
+						if (nGaijiIndex < pTxt->GetGaijiCount()) {
+							const CPrinterGaiji* pGaiji =
+								pTxt->GetGaiji(nGaijiIndex);
+							if (pGaiji && pGaiji->IsValidData()) {
+								int srcW = pGaiji->GetDotCX();
+								int srcH = pGaiji->GetDotCY();
+								for (int dy = 0; dy < oh; dy++) {
+									int sy = srcH > 0 ? (dy * srcH / oh) : 0;
+									for (int dx = 0; dx < cw; dx++) {
+										int sx = srcW > 0 ? (dx * srcW / cw) : 0;
+										if (pGaiji->GetPixel(sx, sy) == 0) {
+											int px = xCur + dx;
+											int py = oy + dy;
+											if (px >= 0 && px < nTexW && py >= 0 && py < nTexH) {
+												vPixels[py * nTexW + px] = 0xFF000000;
+											}
+										}
+									}
+								}
+							}
+						}
+						nGaijiIndex++;
+						xCur += cw + (int)(pTxt->GetRightGap(i) * fScaleX);
+						continue;
+					}
+
 					if (wText <= 0x20) {
 						xCur += cw + (int)(pTxt->GetRightGap(i) * fScaleX);
 						continue;
 					}
 
-					if (wText > 0x20 && wText <= 0x7E) {
+					bool bIsPrintableAscii =
+						(nCharType == CPrinterTextObject::CHAR_ASCII ||
+						 nCharType == CPrinterTextObject::CHAR_ANK) &&
+						wText >= 0x21 && wText <= 0x7E;
+					if (bIsPrintableAscii) {
 						// Render using embedded 5x7 bitmap font, scaled to cell
 						static const uint8_t s_font5x7[][7] = {
 							{0x20,0x20,0x20,0x00,0x20,0x00,0x00}, // ! 0x21
@@ -1875,8 +2002,8 @@ void RebuildPrinterTexture(SPrinterPreview& pp,
 								}
 							}
 						}
-					} else if (wText > 0x20) {
-						// Non-renderable: small filled block
+					} else {
+						// Non-renderable (kanji/kana/other): small filled block
 						int blockH = oh * 2 / 3;
 						if (blockH < 1) blockH = 1;
 						int blockW = cw > 1 ? cw - 1 : 1;
@@ -2008,6 +2135,14 @@ void DrawPrinterPreviewContent(SPrinterPreview& pp)
 					if (pp.nPage >= (int)pPrinter->size() && pp.nPage > 0)
 						pp.nPage--;
 					pp.bDirty = true;
+				}
+			}
+			if (ImGui::Button("Copy Text")) {
+				if (nPageCount > 0) {
+					CX88PrinterDrawer drawer;
+					std::string strText;
+					drawer.ExtractText(pPrinter, pp.nPage, strText, false);
+					SDL_SetClipboardText(strText.c_str());
 				}
 			}
 			if (ImGui::Button("Reset")) {

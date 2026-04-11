@@ -17,25 +17,15 @@ using namespace NX88Utility;
 
 ////////////////////////////////////////////////////////////
 // implementation of CX88PrinterDrawer
-
-////////////////////////////////////////////////////////////
-// create & destroy
-
-// default constructor
-
-CX88PrinterDrawer::CX88PrinterDrawer() {
-}
-
-// destructor
-
-CX88PrinterDrawer::~CX88PrinterDrawer() {
-}
+//
+// Constructor/destructor, GetCGCharacterData and ExtractText are
+// defined in X88PrinterDrawerCGData.cpp so they can be linked into
+// builds that do not pull in the GUI drawing backends (Cairo, GDI).
 
 ////////////////////////////////////////////////////////////
 // operation
 
-// getr CG-charater data
-
+#if 0
 uint16_t CX88PrinterDrawer::GetCGCharacterData(
 	uint16_t wText,
 	int anPoints[64][2],
@@ -380,6 +370,7 @@ uint16_t CX88PrinterDrawer::GetCGCharacterData(
 	}
 	return wChar;
 }
+#endif
 
 #ifdef X88_GUI_WINDOWS
 
@@ -2142,6 +2133,7 @@ void CX88PrinterDrawer::DrawPrinterObjectToCairo(
 //         true  : line-break = CR+LF
 //         false : line-break = LF
 
+#if 0
 void CX88PrinterDrawer::ExtractText(
 	const CParallelPrinter* pPrinter,
 	int nPage,
@@ -2245,3 +2237,4 @@ void CX88PrinterDrawer::ExtractText(
 		}
 	}
 }
+#endif
