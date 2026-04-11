@@ -1477,6 +1477,386 @@ void DrawExportRamWindow(bool& bShow)
 	ImGui::End();
 }
 
+// ---- Printer Preview ----
+
+struct SPrinterPreview {
+	SDL_Texture* pTexture;
+	int nTexW;
+	int nTexH;
+	int nPage;
+	int nZoom; // 0-4: BASE_DPI << nZoom
+	bool bDirty;
+};
+
+void InitPrinterPreview(SPrinterPreview& pp)
+{
+	pp.pTexture = NULL;
+	pp.nTexW = 0;
+	pp.nTexH = 0;
+	pp.nPage = 0;
+	pp.nZoom = 2; // default 72 DPI
+	pp.bDirty = true;
+}
+
+void DestroyPrinterPreview(SPrinterPreview& pp)
+{
+	if (pp.pTexture) {
+		SDL_DestroyTexture(pp.pTexture);
+		pp.pTexture = NULL;
+	}
+}
+
+void RebuildPrinterTexture(SPrinterPreview& pp,
+	SDL_Renderer* pRenderer, CParallelPrinter& printer)
+{
+	enum { BASE_DPI = 18 };
+	int nDrawDPI = BASE_DPI << pp.nZoom;
+	int nPrinterDPI = printer.GetDPI();
+	int nPaperW = printer.GetPaperWidth();
+	int nPaperH = printer.GetPaperHeight();
+	if (nPaperW <= 0 || nPaperH <= 0) return;
+
+	int nTexW = (nPaperW * nDrawDPI + nPrinterDPI - 1) / nPrinterDPI;
+	int nTexH = (nPaperH * nDrawDPI + nPrinterDPI - 1) / nPrinterDPI;
+	if (nTexW < 1) nTexW = 1;
+	if (nTexH < 1) nTexH = 1;
+
+	// Limit texture size
+	if (nTexW > 4096) nTexW = 4096;
+	if (nTexH > 4096) nTexH = 4096;
+
+	// Rebuild pixel buffer
+	int nPixels = nTexW * nTexH;
+	std::vector<uint32_t> vPixels(nPixels, 0xFFFFFFFF); // white
+
+	float fScaleX = (float)nTexW / nPaperW;
+	float fScaleY = (float)nTexH / nPaperH;
+
+	// Draw paper border (black outline)
+	for (int x = 0; x < nTexW; x++) {
+		vPixels[x] = 0xFF000000;
+		vPixels[(nTexH-1) * nTexW + x] = 0xFF000000;
+	}
+	for (int y = 0; y < nTexH; y++) {
+		vPixels[y * nTexW] = 0xFF000000;
+		vPixels[y * nTexW + nTexW - 1] = 0xFF000000;
+	}
+
+	// Draw printer head (red rectangle)
+	int nPage = pp.nPage;
+	if (nPage == printer.GetCurrentPage()) {
+		int nHeadX = printer.GetHeadX();
+		int nHeadY = printer.GetHeadY();
+		int nHeadH = printer.GetHeadHeight();
+		int nPaperLeft = 0, nPaperTop = 0;
+		nPaperLeft = printer.GetPaperLeft();
+	nPaperTop = printer.GetPaperTop();
+
+		int px0 = (int)((nHeadX - nPaperLeft) * fScaleX);
+		int py0 = (int)((nHeadY - nPaperTop) * fScaleY);
+		int px1 = px0 + (int)(2 * fScaleX);
+		int py1 = py0 + (int)(nHeadH * fScaleY);
+		if (px0 < 0) px0 = 0;
+		if (py0 < 0) py0 = 0;
+		if (px1 > nTexW) px1 = nTexW;
+		if (py1 > nTexH) py1 = nTexH;
+		for (int y = py0; y < py1; y++) {
+			for (int x = px0; x < px1; x++) {
+				vPixels[y * nTexW + x] = 0xFFFF4444; // red
+			}
+		}
+	}
+
+	// Draw sprocket holes for continuous paper
+	int nSelectedPaper = printer.GetSelectedPaper();
+	if (nSelectedPaper == CParallelPrinter::PAPER_C10 ||
+		nSelectedPaper == CParallelPrinter::PAPER_C15)
+	{
+		int nGap = nPrinterDPI / 2;
+		int nDiam = (nPrinterDPI * 40) / 254;
+		int nRadius = (int)(nDiam * fScaleX / 2);
+		if (nRadius < 1) nRadius = 1;
+		// Left and right columns
+		for (int side = 0; side < 2; side++) {
+			int cx = side == 0
+				? (int)(nDiam * fScaleX / 2)
+				: nTexW - 1 - (int)(nDiam * fScaleX / 2);
+			for (int yDot = nGap/2; yDot < nPaperH; yDot += nGap) {
+				int cy = (int)(yDot * fScaleY);
+				// Draw filled circle (simple midpoint)
+				for (int dy = -nRadius; dy <= nRadius; dy++) {
+					for (int dx = -nRadius; dx <= nRadius; dx++) {
+						if (dx*dx + dy*dy <= nRadius*nRadius) {
+							int px = cx + dx;
+							int py = cy + dy;
+							if (px >= 0 && px < nTexW && py >= 0 && py < nTexH) {
+								vPixels[py * nTexW + px] = 0xFF000000;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Draw printer objects (images and text)
+	int nPaperLeft = 0, nPaperTop = 0;
+	nPaperLeft = printer.GetPaperLeft();
+	nPaperTop = printer.GetPaperTop();
+
+	if (nPage >= 0 && nPage < (int)printer.size()) {
+		CPrinterPage* pPage = *(printer.begin() + nPage);
+		for (std::list<CPrinterObject*>::const_iterator it = pPage->begin();
+			it != pPage->end(); ++it)
+		{
+			CPrinterObject* pObj = *it;
+			if (pObj->GetObjectType() == CPrinterObject::POBJ_IMAGE) {
+				const CPrinterImageObject* pImg =
+					(const CPrinterImageObject*)pObj;
+				int ox = (int)((pImg->GetX() - nPaperLeft) * fScaleX);
+				int oy = (int)((pImg->GetY() - nPaperTop) * fScaleY);
+				int ow = (int)(pImg->GetWidth() * fScaleX);
+				int oh = (int)(pImg->GetHeight() * fScaleY);
+				if (ow < 1) ow = 1;
+				if (oh < 1) oh = 1;
+				int srcW = pImg->GetDotCX();
+				int srcH = pImg->GetDotCY();
+				for (int dy = 0; dy < oh; dy++) {
+					int sy = srcH > 0 ? (dy * srcH / oh) : 0;
+					for (int dx = 0; dx < ow; dx++) {
+						int sx = srcW > 0 ? (dx * srcW / ow) : 0;
+						if (pImg->GetPixel(sx, sy) == 0) {
+							int px = ox + dx;
+							int py = oy + dy;
+							if (px >= 0 && px < nTexW && py >= 0 && py < nTexH) {
+								vPixels[py * nTexW + px] = 0xFF000000;
+							}
+						}
+					}
+				}
+			} else if (pObj->GetObjectType() == CPrinterObject::POBJ_TEXT) {
+				const CPrinterTextObject* pTxt =
+					(const CPrinterTextObject*)pObj;
+				int ox = (int)((pTxt->GetX() - nPaperLeft) * fScaleX);
+				int oy = (int)((pTxt->GetY() - nPaperTop) * fScaleY);
+				int charH = pTxt->GetCharHeight();
+				int oh = (int)(charH * fScaleY);
+				if (oh < 1) oh = 1;
+				int nLen = pTxt->GetTextLength();
+				int xCur = ox;
+				for (int i = 0; i < nLen; i++) {
+					int cw = (int)(pTxt->GetCharWidth(i) * fScaleX);
+					if (cw < 1) cw = 1;
+					uint16_t wText = pTxt->GetText()[i];
+					int nCharType = pTxt->GetCharType(i);
+					// For printable ASCII, render a small block in
+					// the vertical center of the character cell.
+					// This gives a readable "text line" appearance.
+					if (wText > 0x20 && wText <= 0x7E &&
+						(nCharType == CPrinterTextObject::CHAR_ANK ||
+						 nCharType == CPrinterTextObject::CHAR_ASCII))
+					{
+						int blockH = oh * 2 / 3;
+						if (blockH < 1) blockH = 1;
+						int blockTop = oy + (oh - blockH) / 2;
+						// Thin vertical strokes for each character
+						int strokeW = cw > 3 ? cw / 3 : 1;
+						int strokeX = xCur + (cw - strokeW) / 2;
+						for (int dy = 0; dy < blockH; dy++) {
+							int py = blockTop + dy;
+							if (py < 0 || py >= nTexH) continue;
+							for (int dx = 0; dx < strokeW; dx++) {
+								int px = strokeX + dx;
+								if (px >= 0 && px < nTexW) {
+									vPixels[py * nTexW + px] = 0xFF000000;
+								}
+							}
+						}
+					} else if (wText > 0x20) {
+						// Non-ASCII or kanji: small filled block
+						int blockH = oh * 2 / 3;
+						if (blockH < 1) blockH = 1;
+						int blockW = cw > 1 ? cw - 1 : 1;
+						int blockTop = oy + (oh - blockH) / 2;
+						for (int dy = 0; dy < blockH; dy++) {
+							int py = blockTop + dy;
+							if (py < 0 || py >= nTexH) continue;
+							for (int dx = 0; dx < blockW; dx++) {
+								int px = xCur + dx;
+								if (px >= 0 && px < nTexW) {
+									vPixels[py * nTexW + px] = 0xFF404040;
+								}
+							}
+						}
+					}
+					xCur += cw;
+					xCur += (int)(pTxt->GetRightGap(i) * fScaleX);
+				}
+				// Underline
+				if (pTxt->GetLineType() & CPrinterTextObject::LINE_UNDER) {
+					int lineY = oy + oh - 1;
+					if (lineY >= 0 && lineY < nTexH) {
+						for (int dx = ox; dx < xCur && dx < nTexW; dx++) {
+							if (dx >= 0) vPixels[lineY * nTexW + dx] = 0xFF000000;
+						}
+					}
+				}
+				// Overline
+				if (pTxt->GetLineType() & CPrinterTextObject::LINE_UPPER) {
+					if (oy >= 0 && oy < nTexH) {
+						for (int dx = ox; dx < xCur && dx < nTexW; dx++) {
+							if (dx >= 0) vPixels[oy * nTexW + dx] = 0xFF000000;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Upload to texture
+	if (pp.pTexture && (pp.nTexW != nTexW || pp.nTexH != nTexH)) {
+		SDL_DestroyTexture(pp.pTexture);
+		pp.pTexture = NULL;
+	}
+	if (!pp.pTexture) {
+		pp.pTexture = SDL_CreateTexture(pRenderer,
+			SDL_PIXELFORMAT_ARGB8888,
+			SDL_TEXTUREACCESS_STREAMING,
+			nTexW, nTexH);
+	}
+	if (pp.pTexture) {
+		SDL_UpdateTexture(pp.pTexture, NULL, &vPixels[0], nTexW * 4);
+	}
+	pp.nTexW = nTexW;
+	pp.nTexH = nTexH;
+	pp.bDirty = false;
+}
+
+static const char* s_aszPaperNames[] = {
+	"None", "10\" Continuous", "15\" Continuous",
+	"A5 Portrait", "A5 Landscape",
+	"A4 Portrait", "A4 Landscape",
+	"A3 Portrait", "A3 Landscape",
+	"B5 Portrait", "B5 Landscape",
+	"B4 Portrait", "B4 Landscape",
+	"Postcard Portrait", "Postcard Landscape"
+};
+
+void DrawPrinterPreviewWindow(bool& bShow, SPrinterPreview& pp,
+	SDL_Renderer* pRenderer)
+{
+	if (!bShow) return;
+
+	ImGui::SetNextWindowSize(ImVec2(500, 500), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Printer Preview", &bShow, ImGuiWindowFlags_NoCollapse)) {
+		CParallelPrinter* pPrinter = NULL;
+		if (g_nParallelDevice == 1) {
+			pPrinter = &g_parallelPR201;
+		}
+
+		if (!pPrinter) {
+			ImGui::TextDisabled("No printer connected. Select PC-PR201 in System > Parallel Port.");
+		} else {
+			// Paper selection
+			int nPaper = pPrinter->GetSelectedPaper();
+			if (ImGui::Combo("Paper", &nPaper, s_aszPaperNames, 15)) {
+				pPrinter->SelectPaper(nPaper);
+				pp.bDirty = true;
+			}
+			ImGui::SameLine();
+			bool bCenter = pPrinter->IsPaperCentering();
+			if (ImGui::Checkbox("Center", &bCenter)) {
+				pPrinter->SetPaperCentering(bCenter);
+				pp.bDirty = true;
+			}
+
+			// Page navigation
+			int nPageCount = (int)pPrinter->size();
+			if (pp.nPage >= nPageCount && nPageCount > 0) {
+				pp.nPage = nPageCount - 1;
+				pp.bDirty = true;
+			}
+			ImGui::Text("Page %d / %d", nPageCount > 0 ? pp.nPage + 1 : 0, nPageCount);
+			ImGui::SameLine();
+			if (ImGui::Button("<") && pp.nPage > 0) {
+				pp.nPage--;
+				pp.bDirty = true;
+			}
+			ImGui::SameLine();
+			if (ImGui::Button(">") && pp.nPage < nPageCount - 1) {
+				pp.nPage++;
+				pp.bDirty = true;
+			}
+			ImGui::SameLine();
+			// Zoom
+			ImGui::Text("Zoom:");
+			ImGui::SameLine();
+			if (ImGui::Button("-") && pp.nZoom > 0) {
+				pp.nZoom--;
+				pp.bDirty = true;
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("+") && pp.nZoom < 4) {
+				pp.nZoom++;
+				pp.bDirty = true;
+			}
+			ImGui::SameLine();
+			ImGui::Text("%d%%", (100 * (18 << pp.nZoom)) / pPrinter->GetDPI());
+
+			// Action buttons
+			if (ImGui::Button("Paper Feed")) {
+				pPrinter->Flush();
+				pp.bDirty = true;
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Delete Page") && nPageCount > 0) {
+				pPrinter->DeletePage(pp.nPage);
+				if (pp.nPage >= (int)pPrinter->size() && pp.nPage > 0) {
+					pp.nPage--;
+				}
+				pp.bDirty = true;
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Delete All")) {
+				pPrinter->DeleteAllPages();
+				pp.nPage = 0;
+				pp.bDirty = true;
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Reset")) {
+				pPrinter->Initialize();
+				pPrinter->Reset();
+				pp.nPage = 0;
+				pp.bDirty = true;
+			}
+
+			// Check dirty flag from printer
+			if (pPrinter->IsDirty()) {
+				pPrinter->SetDirty(false);
+				pp.bDirty = true;
+			}
+
+			// Rebuild texture if needed
+			if (pp.bDirty && pPrinter->GetPaperWidth() > 0) {
+				RebuildPrinterTexture(pp, pRenderer, *pPrinter);
+			}
+
+			// Preview area with scroll
+			if (pp.pTexture && pp.nTexW > 0 && pp.nTexH > 0) {
+				ImGui::Separator();
+				ImVec2 vRegion = ImGui::GetContentRegionAvail();
+				ImGui::BeginChild("PrinterPreview", vRegion,
+					ImGuiChildFlags_None,
+					ImGuiWindowFlags_HorizontalScrollbar);
+				ImGui::Image((ImTextureID)(intptr_t)pp.pTexture,
+					ImVec2((float)pp.nTexW, (float)pp.nTexH));
+				ImGui::EndChild();
+			}
+		}
+	}
+	ImGui::End();
+}
+
 #endif // X88000_SDL3_HAS_IMGUI
 
 std::string EnsureTrailingSlash(const std::string& fstrPath)
@@ -2608,6 +2988,9 @@ int main(int argc, char** argv) {
 	bool bShowEnvWindow = false;
 	bool bShowDiskWindow = false;
 	bool bShowTapeWindow = false;
+	bool bShowPrinterWindow = false;
+	SPrinterPreview printerPreview;
+	InitPrinterPreview(printerPreview);
 	SDebugWindow dbgWin;
 	InitDebugWindowStruct(dbgWin);
 	bool bBoostMode = false;
@@ -2881,6 +3264,14 @@ int main(int argc, char** argv) {
 				g_strPendingMemoryImage.clear();
 			}
 		}
+		// Flush printer buffer periodically (~every 6 frames ≈ 100ms)
+		if (bCoreReady && g_nParallelDevice == 1) {
+			static int nPrinterFlushCount = 0;
+			if (++nPrinterFlushCount >= 6) {
+				nPrinterFlushCount = 0;
+				g_parallelPR201.Flush();
+			}
+		}
 		if (bCoreReady && !bPauseEmulation) {
 			if (!g_queueIMEChar.empty()) {
 				// Paste text: emulate GTK's 2ms-granularity key injection
@@ -3039,6 +3430,10 @@ int main(int argc, char** argv) {
 								CPC88::Z80Main().SetParallelDevice(g_parallelPR201);
 							}
 						}
+						ImGui::Separator();
+						if (ImGui::MenuItem("Printer Preview...", NULL, bShowPrinterWindow)) {
+							bShowPrinterWindow = !bShowPrinterWindow;
+						}
 						ImGui::EndMenu();
 					}
 					ImGui::Separator();
@@ -3187,6 +3582,9 @@ int main(int argc, char** argv) {
 			}
 			if (bCoreReady && bShowTapeWindow) {
 				DrawTapeImageManagerWindow(bShowTapeWindow, pWindow);
+			}
+			if (bCoreReady && bShowPrinterWindow) {
+				DrawPrinterPreviewWindow(bShowPrinterWindow, printerPreview, pRenderer);
 			}
 			// Debug panels are drawn in the separate debug window below.
 #endif
@@ -3487,6 +3885,7 @@ int main(int argc, char** argv) {
 		settings.Save();
 	}
 
+	DestroyPrinterPreview(printerPreview);
 	SDL_DestroyTexture(pFrameTexture);
 	SDL_DestroyRenderer(pRenderer);
 	SDL_DestroyWindow(pWindow);
