@@ -1834,19 +1834,17 @@ static const char* s_aszPaperNames[] = {
 
 void DrawPrinterPreviewContent(SPrinterPreview& pp)
 {
+	CParallelPrinter* pPrinter = NULL;
+	if (g_nParallelDevice == 1) {
+		pPrinter = &g_parallelPR201;
+	}
 
-	if (ImGui::Begin("Printer Preview", NULL, ImGuiWindowFlags_NoCollapse)) {
-		CParallelPrinter* pPrinter = NULL;
-		if (g_nParallelDevice == 1) {
-			pPrinter = &g_parallelPR201;
-		}
-
-		if (!pPrinter) {
-			ImGui::TextDisabled("No printer connected. Select PC-PR201 in System > Parallel Port.");
-		} else {
-			// Paper selection
+	// Menu bar
+	if (ImGui::BeginMainMenuBar()) {
+		if (pPrinter) {
 			int nPaper = pPrinter->GetSelectedPaper();
-			if (ImGui::Combo("Paper", &nPaper, s_aszPaperNames, 15)) {
+			ImGui::SetNextItemWidth(180);
+			if (ImGui::Combo("##Paper", &nPaper, s_aszPaperNames, 15)) {
 				pPrinter->SelectPaper(nPaper);
 				pp.bDirty = true;
 			}
@@ -1856,92 +1854,89 @@ void DrawPrinterPreviewContent(SPrinterPreview& pp)
 				pPrinter->SetPaperCentering(bCenter);
 				pp.bDirty = true;
 			}
+			ImGui::Separator();
 
-			// Page navigation
 			int nPageCount = (int)pPrinter->size();
 			if (pp.nPage >= nPageCount && nPageCount > 0) {
 				pp.nPage = nPageCount - 1;
 				pp.bDirty = true;
 			}
-			ImGui::Text("Page %d / %d", nPageCount > 0 ? pp.nPage + 1 : 0, nPageCount);
-			ImGui::SameLine();
+			ImGui::Text("Page %d/%d", nPageCount > 0 ? pp.nPage + 1 : 0, nPageCount);
 			if (ImGui::Button("<") && pp.nPage > 0) {
 				pp.nPage--;
 				pp.bDirty = true;
 			}
-			ImGui::SameLine();
+			ImGui::SameLine(0, 2);
 			if (ImGui::Button(">") && pp.nPage < nPageCount - 1) {
 				pp.nPage++;
 				pp.bDirty = true;
 			}
-			ImGui::SameLine();
-			// Zoom
-			ImGui::Text("Zoom:");
-			ImGui::SameLine();
+			ImGui::Separator();
+
 			if (ImGui::Button("-") && pp.nZoom > 0) {
 				pp.nZoom--;
 				pp.bDirty = true;
 			}
-			ImGui::SameLine();
+			ImGui::SameLine(0, 2);
 			if (ImGui::Button("+") && pp.nZoom < 4) {
 				pp.nZoom++;
 				pp.bDirty = true;
 			}
 			ImGui::SameLine();
 			ImGui::Text("%d%%", (100 * (18 << pp.nZoom)) / pPrinter->GetDPI());
+			ImGui::Separator();
 
-			// Action buttons
-			if (ImGui::Button("Paper Feed")) {
+			if (ImGui::Button("Feed")) {
 				pPrinter->Flush();
 				pp.bDirty = true;
 			}
-			ImGui::SameLine();
-			if (ImGui::Button("Delete Page") && nPageCount > 0) {
-				pPrinter->DeletePage(pp.nPage);
-				if (pp.nPage >= (int)pPrinter->size() && pp.nPage > 0) {
-					pp.nPage--;
+			if (ImGui::Button("Del")) {
+				if (nPageCount > 0) {
+					pPrinter->DeletePage(pp.nPage);
+					if (pp.nPage >= (int)pPrinter->size() && pp.nPage > 0)
+						pp.nPage--;
+					pp.bDirty = true;
 				}
-				pp.bDirty = true;
 			}
-			ImGui::SameLine();
-			if (ImGui::Button("Delete All")) {
-				pPrinter->DeleteAllPages();
-				pp.nPage = 0;
-				pp.bDirty = true;
-			}
-			ImGui::SameLine();
 			if (ImGui::Button("Reset")) {
 				pPrinter->Initialize();
 				pPrinter->Reset();
 				pp.nPage = 0;
 				pp.bDirty = true;
 			}
-
-			// Check dirty flag from printer
-			if (pPrinter->IsDirty()) {
-				pPrinter->SetDirty(false);
-				pp.bDirty = true;
-			}
-
-			// Rebuild texture if needed
-			if (pp.bDirty && pPrinter->GetPaperWidth() > 0) {
-				RebuildPrinterTexture(pp, pp.pRenderer, *pPrinter);
-			}
-
-			// Preview area with scroll
-			if (pp.pTexture && pp.nTexW > 0 && pp.nTexH > 0) {
-				ImGui::Separator();
-				ImVec2 vRegion = ImGui::GetContentRegionAvail();
-				ImGui::BeginChild("PrinterPreview", vRegion,
-					ImGuiChildFlags_None,
-					ImGuiWindowFlags_HorizontalScrollbar);
-				ImGui::Image((ImTextureID)(intptr_t)pp.pTexture,
-					ImVec2((float)pp.nTexW, (float)pp.nTexH));
-				ImGui::EndChild();
-			}
+		} else {
+			ImGui::TextDisabled("No printer connected");
 		}
+		ImGui::EndMainMenuBar();
 	}
-	ImGui::End();
+
+	if (!pPrinter) return;
+
+	// Check dirty flag
+	if (pPrinter->IsDirty()) {
+		pPrinter->SetDirty(false);
+		pp.bDirty = true;
+	}
+	if (pp.bDirty && pPrinter->GetPaperWidth() > 0) {
+		RebuildPrinterTexture(pp, pp.pRenderer, *pPrinter);
+	}
+
+	// Preview: fill remaining window area with scrollable image
+	if (pp.pTexture && pp.nTexW > 0 && pp.nTexH > 0) {
+		float fMenuH = ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.y;
+		ImGui::SetNextWindowPos(ImVec2(0, fMenuH));
+		ImGui::SetNextWindowSize(ImVec2(
+			ImGui::GetMainViewport()->Size.x,
+			ImGui::GetMainViewport()->Size.y - fMenuH));
+		ImGui::Begin("##Preview", NULL,
+			ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+			ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+			ImGuiWindowFlags_HorizontalScrollbar |
+			ImGuiWindowFlags_NoSavedSettings);
+		ImGui::Image((ImTextureID)(intptr_t)pp.pTexture,
+			ImVec2((float)pp.nTexW, (float)pp.nTexH));
+		ImGui::End();
+	}
 }
 
 #endif // X88000_SDL3_HAS_IMGUI
