@@ -21,38 +21,38 @@ X88000M は、Manuke 氏による PC-8801 エミュレータ `X88000` の公開�
 ## 現在の状態
 
 - Linux 版ソースをベースにしています。
-- macOS では GTK+ 2 系を使ったビルドを確認しています。
-- macOS 向けの変更は、Linux 前提の一部 X11 経路の無効化と CMake / 既存ビルド設定の調整に留めています。
+- macOS の主系統フロントエンドは `SDL3 + Dear ImGui` です。
+- macOS の通常ビルドでは GTK+ / GLib は不要です。
+- レガシー GTK フロントエンドは必要な場合のみ `-DX88000M_BUILD_LEGACY_GTK=ON` で有効化できます。
 - OPNA (`YM2608`) エミュレーションは upstream 文書でも「大して機能してません」とされており、現状でも未完成です。
 - BEEP / PCG のロジックはありますが、実際の音声出力実装は Windows の DirectSound 前提で、非 Windows 環境では音は未実装です。
 
 ## ビルド
 
-### Linux
+### SDL3 frontend (default)
+
+`SDL3`、`pkg-config` または `X88000M_FETCH_SDL3=ON`、`cmake` が必要です。
+Dear ImGui は `third_party/imgui/` を優先し、無い場合は `X88000M_FETCH_IMGUI=ON` で自動取得します。
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target X88000SDL3 -j
+```
+
+macOS では `build/X88000SDL3.app` が生成されます。
+端末から直接起動する場合は `build/X88000SDL3.app/Contents/MacOS/X88000SDL3` を実行できます。
+
+### Legacy GTK frontend (optional)
 
 `gtk+-2.0` の開発環境、`pkg-config`、`cmake` が必要です。
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DX88000M_BUILD_LEGACY_GTK=ON
+cmake --build build --target X88000 -j
 ```
 
-実行ファイル `X88000` は通常 `build/` 配下に生成されます。
-
-### macOS
-
-Homebrew で `gtk+` を入れた状態を想定しています。
-
-```sh
-brew install gtk+
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-```
-
-macOS では `build/X88000.app` が生成されます。端末から直接起動する場合は、実体の実行ファイル `build/X88000.app/Contents/MacOS/X88000` を使えます。
+macOS では `build/X88000.app` が生成されます。端末から直接起動する場合は `build/X88000.app/Contents/MacOS/X88000` を使えます。
 この GTK2 ベース実装では、メニューは macOS の上部メニューバーではなくアプリウィンドウ内に表示されます。
-
-環境によって `pkg-config` が `gtk+-2.0` を見つけられない場合は、`PKG_CONFIG_PATH` に Homebrew の `gtk+` の `pkgconfig` ディレクトリを追加してください。
 
 upstream 由来の [`src/Makefile`](./src/Makefile) は参考用として残していますが、このリポジトリでは CMake を正規のビルド入口としています。
 

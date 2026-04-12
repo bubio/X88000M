@@ -375,20 +375,27 @@ void CX88View::DrawDC(HDC hdc) {
 // draw window
 
 void CX88View::DrawWindow() {
-	GdkColor* pColorTable = X88k().GetScreenDrawer().GetColorTable();
+	SX88Color* pColorTable = X88k().GetScreenDrawer().GetColorTable();
+	GdkColor aGdkColorTable[CX88ScreenDrawer::COLOR_COUNT];
+	for (int i = 0; i < CX88ScreenDrawer::COLOR_COUNT; i++) {
+		aGdkColorTable[i].pixel = 0;
+		aGdkColorTable[i].red = (gushort)pColorTable[i].red;
+		aGdkColorTable[i].green = (gushort)pColorTable[i].green;
+		aGdkColorTable[i].blue = (gushort)pColorTable[i].blue;
+	}
 	gboolean abSuccesses[CX88ScreenDrawer::COLOR_COUNT];
 	GdkColormap* pSysColormap = gdk_colormap_get_system();
 	gdk_colormap_alloc_colors(
 		pSysColormap,
-		pColorTable,
+		aGdkColorTable,
 		CX88ScreenDrawer::COLOR_COUNT,
 		FALSE, FALSE,
 		abSuccesses);
 	for (int i = 0; i < CX88ScreenDrawer::COLOR_COUNT; i++) {
 		m_rgbcmap.colors[i] = (guint32)(
-			(((guint32)pColorTable[i].red & 0xFF00) << 8) |
-			((guint32)pColorTable[i].green & 0xFF00) |
-			((guint32)pColorTable[i].blue >> 8));
+			(((guint32)aGdkColorTable[i].red & 0xFF00) << 8) |
+			((guint32)aGdkColorTable[i].green & 0xFF00) |
+			((guint32)aGdkColorTable[i].blue >> 8));
 	}
 	if (m_pGC == NULL) {
 		m_pGC = gdk_gc_new(GetWndHandle()->window);

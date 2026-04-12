@@ -14,6 +14,12 @@
 
 class CX88ScreenDrawer;
 
+struct SX88Color {
+	uint16_t red;
+	uint16_t green;
+	uint16_t blue;
+};
+
 ////////////////////////////////////////////////////////////
 // include
 
@@ -66,7 +72,7 @@ public:
 		SYSPAL_COUNT = 20
 	};
 
-#elif defined(X88_GUI_GTK)
+#elif defined(X88_GUI_GTK) || defined(X88_GUI_SDL3)
 
 	// bit count / line length / line step
 	enum {
@@ -129,10 +135,10 @@ protected:
 	// screen DIB2-BITMAPINFO
 	static BITMAPINFO* m_pbmiScreen2;
 
-#elif defined(X88_GUI_GTK)
+#elif defined(X88_GUI_GTK) || defined(X88_GUI_SDL3)
 
 	// color table
-	static GdkColor m_aColorTable[COLOR_COUNT];
+	static SX88Color m_aColorTable[COLOR_COUNT];
 
 #endif // X88_GUI
 
@@ -202,10 +208,10 @@ public:
 		return m_pbmiScreen2;
 	}
 
-#elif defined(X88_GUI_GTK)
+#elif defined(X88_GUI_GTK) || defined(X88_GUI_SDL3)
 
 	// get color table
-	static GdkColor* GetColorTable() {
+	static SX88Color* GetColorTable() {
 		return m_aColorTable;
 	}
 

@@ -11,7 +11,7 @@ set(X88000_FONT_RESOURCES
 set(X88000_THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
 set(X88000_IMGUI_DIR "${X88000_THIRD_PARTY_DIR}/imgui")
 
-option(X88000M_BUILD_LEGACY_GTK "Build legacy GTK frontend" ON)
+option(X88000M_BUILD_LEGACY_GTK "Build legacy GTK frontend" OFF)
 option(X88000M_BUILD_SDL3_FRONTEND "Build SDL3 frontend prototype" ON)
 option(X88000M_FETCH_SDL3 "Fetch SDL3 from upstream when pkg-config is unavailable" OFF)
 option(X88000M_FETCH_IMGUI "Fetch Dear ImGui from upstream when third_party/imgui is unavailable" ON)
@@ -22,7 +22,13 @@ if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-find_package(PkgConfig REQUIRED)
+set(X88000M_PKGCONFIG_READY OFF)
+if(X88000M_BUILD_LEGACY_GTK OR X88000M_BUILD_SDL3_FRONTEND)
+	find_package(PkgConfig QUIET)
+	if(PkgConfig_FOUND)
+		set(X88000M_PKGCONFIG_READY ON)
+	endif()
+endif()
 
 file(GLOB X88000_SOURCES CONFIGURE_DEPENDS
 	"${X88000_SRC_DIR}/*.cpp")
@@ -58,16 +64,24 @@ set(X88000_CORE_SOURCES
 	"${X88000_SRC_DIR}/Z80Data.cpp")
 
 set(X88000M_GTK2_READY OFF)
-if(X88000M_BUILD_LEGACY_GTK OR X88000M_BUILD_SDL3_FRONTEND)
+if(X88000M_BUILD_LEGACY_GTK)
+	if(NOT X88000M_PKGCONFIG_READY)
+		message(FATAL_ERROR "Legacy GTK frontend requires pkg-config.")
+	endif()
 	pkg_check_modules(GTK2 REQUIRED IMPORTED_TARGET gtk+-2.0)
 	set(X88000M_GTK2_READY ON)
 endif()
 
-if(X88000M_BUILD_SDL3_FRONTEND AND X88000M_GTK2_READY)
+if(X88000M_BUILD_SDL3_FRONTEND)
 	add_library(x88core STATIC ${X88000_CORE_SOURCES})
 	target_include_directories(x88core PUBLIC "${X88000_SRC_DIR}")
-	target_link_libraries(x88core PUBLIC PkgConfig::GTK2)
-	target_compile_definitions(x88core PUBLIC X88_PRINTER_DRAW_NO_BACKEND=1)
+	target_compile_definitions(x88core PUBLIC
+		X88_GUI_SDL3=1
+		X88_PRINTER_DRAW_NO_BACKEND=1)
+	find_library(X88000M_ICONV_LIBRARY NAMES iconv)
+	if(X88000M_ICONV_LIBRARY)
+		target_link_libraries(x88core PUBLIC "${X88000M_ICONV_LIBRARY}")
+	endif()
 	set_target_properties(x88core PROPERTIES
 		CXX_STANDARD 11
 		CXX_STANDARD_REQUIRED ON
@@ -115,8 +129,10 @@ endif()
 if(X88000M_BUILD_SDL3_FRONTEND)
 	set(X88000M_SDL3_AVAILABLE OFF)
 	set(X88000M_SDL3_LINK_TARGET "")
-	pkg_check_modules(SDL3 QUIET IMPORTED_TARGET sdl3)
-	if(SDL3_FOUND)
+	if(X88000M_PKGCONFIG_READY)
+		pkg_check_modules(SDL3 QUIET IMPORTED_TARGET sdl3)
+	endif()
+	if(X88000M_PKGCONFIG_READY AND SDL3_FOUND)
 		set(X88000M_SDL3_AVAILABLE ON)
 		set(X88000M_SDL3_LINK_TARGET PkgConfig::SDL3)
 	elseif(X88000M_FETCH_SDL3)

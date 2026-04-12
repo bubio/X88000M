@@ -1190,7 +1190,7 @@ bool DoSaveScreenshot(const std::string& fstrPath)
 	} else {
 		uint8_t* pIdx = CX88ScreenDrawer::GetScreenDataBits();
 		if (!pIdx) return false;
-		GdkColor* pCT = CX88ScreenDrawer::GetColorTable();
+		SX88Color* pCT = CX88ScreenDrawer::GetColorTable();
 		for (int n = 0; n < 640*400; n++) {
 			uint8_t p = pIdx[n];
 			vPixels[n] = 0xFF000000U
@@ -2342,8 +2342,8 @@ void ApplyTintStyle()
 		tint.y + (1.0f - tint.y) * 0.3f,
 		tint.z + (1.0f - tint.z) * 0.3f, 1.0f);
 	ImGuiStyle& style = ImGui::GetStyle();
-	style.Colors[ImGuiCol_TitleBg]          = tintDim;
-	style.Colors[ImGuiCol_TitleBgActive]    = tint;
+	style.Colors[ImGuiCol_TitleBg]          = ImVec4(tintDim.x, tintDim.y, tintDim.z, 0.2f);
+	style.Colors[ImGuiCol_TitleBgActive]    = ImVec4(tint.x, tint.y, tint.z, 0.4f);
 	style.Colors[ImGuiCol_Header]           = ImVec4(tint.x, tint.y, tint.z, 0.5f);
 	style.Colors[ImGuiCol_HeaderHovered]    = ImVec4(tint.x, tint.y, tint.z, 0.7f);
 	style.Colors[ImGuiCol_HeaderActive]     = tint;
@@ -3071,7 +3071,7 @@ bool UploadCoreFrameToTexture(
 		if (pbtIndex == NULL) {
 			return false;
 		}
-		GdkColor* pColorTable = g_screenDrawer.GetColorTable();
+		SX88Color* pColorTable = g_screenDrawer.GetColorTable();
 		for (int n = 0; n < 640*400; n++) {
 			uint8_t btPal = pbtIndex[n];
 			uint8_t btR = (uint8_t)(pColorTable[btPal].red >> 8);

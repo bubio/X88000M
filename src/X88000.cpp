@@ -1186,7 +1186,7 @@ bool CX88000::DoClipboardCopyBitmap() {
 			}
 		}
 		if (nColorEntries > 0) {
-			GdkColor* pColorTable = m_scrdrawer.GetColorTable();
+			SX88Color* pColorTable = m_scrdrawer.GetColorTable();
 			uint8_t abtTmp[12];
 			memset(abtTmp, 0, sizeof(abtTmp));
 			abtTmp[10] = 7;

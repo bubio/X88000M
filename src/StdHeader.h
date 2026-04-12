@@ -79,6 +79,15 @@
 #else // UNIX Platform
 
 #define X88_PLATFORM_UNIX
+
+#ifdef X88_GUI_SDL3
+
+#define X88_ENCODE_ICONV
+#define X88_ENCODING_SOURCE_UTF8
+#define X88_ENCODING_GUI_UTF8
+
+#else // legacy GTK frontend
+
 #define X88_GUI_GTK
 #ifndef __APPLE__
 #define X88_GUI_GTK_USEXWINDOW
@@ -89,6 +98,8 @@
 #define X88_ENCODING_SOURCE_UTF8
 #define X88_ENCODING_GUI_UTF8
 #define X88_PRINTER_DRAW_CAIRO
+
+#endif // X88_GUI_SDL3
 
 #endif // Platform
 
@@ -273,6 +284,14 @@ typedef GtkWidget* CX88WndHandle;
 
 #endif // X88_PLATFORM
 
+#elif defined(X88_GUI_SDL3)
+
+#if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
+#define X88_BYTEORDER_LITTLE_ENDIAN
+#else
+#define X88_BYTEORDER_BIG_ENDIAN
+#endif
+
 #endif // X88_GUI
 
 // STL
@@ -294,6 +313,14 @@ typedef GtkWidget* CX88WndHandle;
 #ifndef M_PI
 #define M_PI	3.14159265358979323846
 #endif // M_PI
+
+#ifndef TRUE
+#define TRUE	1
+#endif
+
+#ifndef FALSE
+#define FALSE	0
+#endif
 
 #define min_value(a, b)	(((a) <= (b))? (a): (b))
 #define max_value(a, b)	(((a) >= (b))? (a): (b))

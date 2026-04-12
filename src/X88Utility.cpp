@@ -10,6 +10,12 @@
 
 #include "X88Utility.h"
 
+#if defined(X88_ENCODE_ICONV)
+#include <errno.h>
+#include <iconv.h>
+#include <langinfo.h>
+#endif
+
 ////////////////////////////////////////////////////////////
 // implementation of NX88Utility
 
@@ -385,7 +391,7 @@ static std::string ConvUTF8toX(
 	return strConv;
 }
 
-#elif defined(X88_ENCODE_GTK)
+#elif defined(X88_ENCODE_GTK) || defined(X88_ENCODE_ICONV)
 
 // special encoding
 
@@ -396,12 +402,14 @@ static const char s_szEncFS[] = "filesystem";
 
 // convert string encoding(specified 2 encodings)
 
+#ifdef X88_ENCODE_GTK
+
 static std::string ConvXtoY(
 	const char* pszEncSrc,
 	const char* pszEncDst,
 	const std::string& strOrg)
 {
-	if (pszEncSrc == pszEncDst) {
+	if (strcmp(pszEncSrc, pszEncDst) == 0) {
 		return strOrg;
 	}
 	gsize nWritten = 0;
@@ -436,6 +444,84 @@ static std::string ConvXtoY(
 	return strConv;
 }
 
+#elif defined(X88_ENCODE_ICONV)
+
+static const char* GetLocaleEncoding()
+{
+	const char* pszEncoding = nl_langinfo(CODESET);
+	if ((pszEncoding == NULL) || (pszEncoding[0] == '\0')) {
+		return s_szEncUTF8;
+	}
+	return pszEncoding;
+}
+
+static const char* GetFileSystemEncoding()
+{
+#ifdef __APPLE__
+	return s_szEncUTF8;
+#else
+	return GetLocaleEncoding();
+#endif
+}
+
+static const char* ResolveEncodingName(const char* pszEncoding)
+{
+	if (strcmp(pszEncoding, s_szEncLOC) == 0) {
+		return GetLocaleEncoding();
+	}
+	if (strcmp(pszEncoding, s_szEncFS) == 0) {
+		return GetFileSystemEncoding();
+	}
+	return pszEncoding;
+}
+
+static std::string ConvXtoY(
+	const char* pszEncSrc,
+	const char* pszEncDst,
+	const std::string& strOrg)
+{
+	if (strcmp(pszEncSrc, pszEncDst) == 0) {
+		return strOrg;
+	}
+	if (strOrg.length() <= 0) {
+		return "";
+	}
+	const char* pszEncSrcResolved = ResolveEncodingName(pszEncSrc);
+	const char* pszEncDstResolved = ResolveEncodingName(pszEncDst);
+	if (strcmp(pszEncSrcResolved, pszEncDstResolved) == 0) {
+		return strOrg;
+	}
+	iconv_t hConv = iconv_open(pszEncDstResolved, pszEncSrcResolved);
+	if (hConv == (iconv_t)-1) {
+		return "";
+	}
+
+	std::vector<char> vectConv(strOrg.length()*4+16, 0);
+	char* pszSrc = const_cast<char*>(strOrg.c_str());
+	size_t nSrcLeft = strOrg.length();
+	char* pszDst = &vectConv[0];
+	size_t nDstLeft = vectConv.size();
+	while (nSrcLeft > 0) {
+		size_t nResult = iconv(hConv, &pszSrc, &nSrcLeft, &pszDst, &nDstLeft);
+		if (nResult != (size_t)-1) {
+			continue;
+		}
+		if (errno == E2BIG) {
+			size_t nUsed = vectConv.size()-nDstLeft;
+			vectConv.resize(vectConv.size()*2+16, 0);
+			pszDst = &vectConv[0]+nUsed;
+			nDstLeft = vectConv.size()-nUsed;
+			continue;
+		}
+		iconv_close(hConv);
+		return "";
+	}
+	iconv_close(hConv);
+	return std::string(&vectConv[0], vectConv.size()-nDstLeft);
+}
+
+#endif // X88_ENCODE_ICONV
+
 #endif // X88_ENCODE
 
 // convert string encoding(SJIS -> UTF-8)
@@ -448,7 +534,7 @@ std::string NX88Utility::ConvSJIStoUTF8(
 
 	return ConvXtoUTF8(932, strOrg);
 
-#elif defined(X88_ENCODE_GTK)
+#elif defined(X88_ENCODE_GTK) || defined(X88_ENCODE_ICONV)
 
 	return ConvXtoY(s_szEncSJIS, s_szEncUTF8, strOrg);
 
@@ -466,7 +552,7 @@ std::string NX88Utility::ConvUTF8toSJIS(
 
 	return ConvUTF8toX(932, strOrg);
 
-#elif defined(X88_ENCODE_GTK)
+#elif defined(X88_ENCODE_GTK) || defined(X88_ENCODE_ICONV)
 
 	return ConvXtoY(s_szEncUTF8, s_szEncSJIS, strOrg);
 
@@ -484,7 +570,7 @@ std::string NX88Utility::ConvSRCtoUTF8(
 
 	return ConvXtoUTF8(CP_OEMCP, strOrg);
 
-#elif defined(X88_ENCODE_GTK)
+#elif defined(X88_ENCODE_GTK) || defined(X88_ENCODE_ICONV)
 
 	return strOrg;
 
@@ -510,7 +596,7 @@ std::string NX88Utility::ConvGUItoUTF8(
 
 #endif // X88_ENCODING_GUI
 
-#elif defined(X88_ENCODE_GTK)
+#elif defined(X88_ENCODE_GTK) || defined(X88_ENCODE_ICONV)
 
 	return strOrg;
 
@@ -536,7 +622,7 @@ std::string NX88Utility::ConvUTF8toGUI(
 
 #endif // X88_ENCODING_GUI
 
-#elif defined(X88_ENCODE_GTK)
+#elif defined(X88_ENCODE_GTK) || defined(X88_ENCODE_ICONV)
 
 	return strOrg;
 
@@ -562,7 +648,7 @@ std::string NX88Utility::ConvSRCtoGUI(
 
 #endif // X88_ENCODING_GUI
 
-#elif defined(X88_ENCODE_GTK)
+#elif defined(X88_ENCODE_GTK) || defined(X88_ENCODE_ICONV)
 
 	return strOrg;
 
@@ -580,7 +666,7 @@ std::string NX88Utility::ConvLOCtoUTF8(
 
 	return ConvXtoUTF8(CP_OEMCP, strOrg);
 
-#elif defined(X88_ENCODE_GTK)
+#elif defined(X88_ENCODE_GTK) || defined(X88_ENCODE_ICONV)
 
 	return ConvXtoY(s_szEncLOC, s_szEncUTF8, strOrg);
 
@@ -598,7 +684,7 @@ std::string NX88Utility::ConvUTF8toLOC(
 
 	return ConvUTF8toX(CP_OEMCP, strOrg);
 
-#elif defined(X88_ENCODE_GTK)
+#elif defined(X88_ENCODE_GTK) || defined(X88_ENCODE_ICONV)
 
 	return ConvXtoY(s_szEncUTF8, s_szEncLOC, strOrg);
 
@@ -616,7 +702,7 @@ std::string NX88Utility::ConvFStoUTF8(
 
 	return ConvXtoUTF8(CP_OEMCP, strOrg);
 
-#elif defined(X88_ENCODE_GTK)
+#elif defined(X88_ENCODE_GTK) || defined(X88_ENCODE_ICONV)
 
 	return ConvXtoY(s_szEncFS, s_szEncUTF8, strOrg);
 
@@ -634,7 +720,7 @@ std::string NX88Utility::ConvUTF8toFS(
 
 	return ConvUTF8toX(CP_OEMCP, strOrg);
 
-#elif defined(X88_ENCODE_GTK)
+#elif defined(X88_ENCODE_GTK) || defined(X88_ENCODE_ICONV)
 
 	return ConvXtoY(s_szEncUTF8, s_szEncFS, strOrg);
 
@@ -660,7 +746,7 @@ std::string NX88Utility::ConvFStoGUI(
 
 #endif // X88_ENCODING_GUI
 
-#elif defined(X88_ENCODE_GTK)
+#elif defined(X88_ENCODE_GTK) || defined(X88_ENCODE_ICONV)
 
 	return ConvXtoY(s_szEncFS, s_szEncUTF8, strOrg);
 
