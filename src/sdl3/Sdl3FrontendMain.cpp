@@ -64,6 +64,8 @@ struct SDiskFileRecord {
 };
 std::vector<SDiskFileRecord> g_vDiskFileRecords;
 
+const char kMainWindowTitle[] = "X88000M";
+
 void UpdateWindowTitle(SDL_Window* pWindow, bool bCoreReady, bool bPauseEmulation);
 // Forward declarations for helpers used by ImGui draw functions further up the file.
 void SetMediaStatus(const std::string& strStatus);
@@ -1249,21 +1251,154 @@ bool DoCopyScreenText()
 }
 
 // Export folder dialog result — may be called from a non-main thread.
+struct SRamExportRequest {
+	bool bActive;
+	bool bMainRam0;
+	bool bMainRam1;
+	bool bFastTVRam;
+	bool bSlowTVRam;
+	bool bGVRam0;
+	bool bGVRam1;
+	bool bGVRam2;
+	bool bSubRam;
+	bool bExRam0;
+	bool bExRam1;
+	bool bFastTVRamUse;
+	bool bSubDisabled;
+};
+
 std::string g_strPendingExportDir;
 std::mutex  g_mtxExportDir;
+bool g_bExportFolderDialogResolved = false;
+bool g_bExportFolderDialogAccepted = false;
+std::string g_strLastExportDir;
+std::string g_strRamExportStatus;
+SRamExportRequest g_ramExportRequest = {};
+
+std::string GetDefaultExportDir()
+{
+	const char* pHome = getenv("HOME");
+	if (pHome && *pHome) {
+		return std::string(pHome) + "/Documents/";
+	}
+	return "./";
+}
 
 void SDLCALL OnExportFolderSelected(void* userdata, const char* const* filelist, int filter)
 {
 	(void)userdata;
 	(void)filter;
+	std::lock_guard<std::mutex> lock(g_mtxExportDir);
+	g_bExportFolderDialogResolved = true;
+	g_bExportFolderDialogAccepted = false;
+	g_strPendingExportDir.clear();
 	if (filelist && filelist[0]) {
 		std::string strDir = filelist[0];
 		if (!strDir.empty() && strDir[strDir.size() - 1] != '/') {
 			strDir += '/';
 		}
-		std::lock_guard<std::mutex> lock(g_mtxExportDir);
 		g_strPendingExportDir = strDir;
+		g_bExportFolderDialogAccepted = true;
 	}
+}
+
+std::string ExportSelectedRam(const std::string& strExportDir,
+	const SRamExportRequest& req)
+{
+	char szTime[64];
+	{
+		time_t t = time(NULL);
+		struct tm* pTm = localtime(&t);
+		strftime(szTime, sizeof(szTime),
+			"X88000M_RAM_%Y%m%d_%H%M%S", pTm);
+	}
+	std::string fstrDir = strExportDir + szTime + "/";
+	mkdir(fstrDir.c_str(), 0755);
+
+	int nExported = 0;
+	auto WriteFile = [&](const char* pszName, const void* pData, size_t nSize) -> bool {
+		std::string fstrPath = fstrDir + pszName;
+		FILE* fpt = fopen(fstrPath.c_str(), "wb");
+		if (fpt == NULL) {
+			return false;
+		}
+		bool bOK = (fwrite(pData, nSize, 1, fpt) == 1);
+		fclose(fpt);
+		return bOK;
+	};
+
+	if (req.bMainRam0) {
+		if (WriteFile("main0.ram", CPC88::Z80Main().GetMainRamPtr(), 0x8000)) {
+			nExported++;
+		}
+	}
+	if (req.bMainRam1) {
+		std::string fstrPath = fstrDir + "main1.ram";
+		FILE* fpt = fopen(fstrPath.c_str(), "wb");
+		if (fpt != NULL) {
+			bool bOK = false;
+			if (req.bFastTVRamUse) {
+				bOK = (fwrite(CPC88::Z80Main().GetMainRamPtr() + 0x8000,
+						0x7000, 1, fpt) == 1) &&
+					(fwrite(CPC88::Z80Main().GetFastTVRamPtr(),
+						0x1000, 1, fpt) == 1);
+			} else {
+				bOK = (fwrite(CPC88::Z80Main().GetMainRamPtr() + 0x8000,
+						0x8000, 1, fpt) == 1);
+			}
+			fclose(fpt);
+			if (bOK) {
+				nExported++;
+			}
+		}
+	}
+	if (req.bFastTVRam && !req.bFastTVRamUse) {
+		if (WriteFile("fast_tv.ram", CPC88::Z80Main().GetFastTVRamPtr(), 0x1000)) {
+			nExported++;
+		}
+	}
+	if (req.bSlowTVRam && req.bFastTVRamUse) {
+		if (WriteFile("slow_tv.ram",
+			CPC88::Z80Main().GetMainRamPtr() + 0xF000, 0x1000))
+		{
+			nExported++;
+		}
+	}
+	if (req.bGVRam0) {
+		if (WriteFile("gv0.ram", CPC88::Z80Main().GetGVRamPtr(0), 0x4000)) {
+			nExported++;
+		}
+	}
+	if (req.bGVRam1) {
+		if (WriteFile("gv1.ram", CPC88::Z80Main().GetGVRamPtr(1), 0x4000)) {
+			nExported++;
+		}
+	}
+	if (req.bGVRam2) {
+		if (WriteFile("gv2.ram", CPC88::Z80Main().GetGVRamPtr(2), 0x4000)) {
+			nExported++;
+		}
+	}
+	if (req.bSubRam && !req.bSubDisabled) {
+		if (WriteFile("sub.ram", CPC88::Z80Sub().GetSubRamPtr(), 0x4000)) {
+			nExported++;
+		}
+	}
+	if (req.bExRam0) {
+		if (WriteFile("ex0.ram", CPC88::Z80Main().GetExRamPtr(0), 0x8000 * 4)) {
+			nExported++;
+		}
+	}
+	if (req.bExRam1) {
+		if (WriteFile("ex1.ram", CPC88::Z80Main().GetExRamPtr(1), 0x8000 * 4)) {
+			nExported++;
+		}
+	}
+
+	char szMsg[256];
+	snprintf(szMsg, sizeof(szMsg),
+		"Exported %d file(s) to %s", nExported, fstrDir.c_str());
+	return szMsg;
 }
 
 void DrawExportRamWindow(bool& bShow)
@@ -1281,8 +1416,6 @@ void DrawExportRamWindow(bool& bShow)
 	static bool bSubRam = true;
 	static bool bExRam0 = false;
 	static bool bExRam1 = false;
-	static std::string strExportDir;
-	static std::string strStatus;
 
 	ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_FirstUseEver);
 	if (ImGui::Begin("Export RAM", &bShow, ImGuiWindowFlags_NoCollapse)) {
@@ -1313,163 +1446,40 @@ void DrawExportRamWindow(bool& bShow)
 
 		ImGui::Separator();
 
-		// Consume folder dialog result (thread-safe)
-		{
-			std::lock_guard<std::mutex> lock(g_mtxExportDir);
-			if (!g_strPendingExportDir.empty()) {
-				strExportDir = g_strPendingExportDir;
-				g_strPendingExportDir.clear();
-			}
+		if (g_strLastExportDir.empty()) {
+			g_strLastExportDir = GetDefaultExportDir();
 		}
-		// Folder selection
-		if (strExportDir.empty()) {
-			const char* pHome = getenv("HOME");
-			if (pHome && *pHome) {
-				strExportDir = std::string(pHome) + "/Documents/";
-			} else {
-				strExportDir = "./";
-			}
-		}
-		ImGui::Text("Export to: %s", strExportDir.c_str());
-		if (ImGui::Button("Browse...")) {
+		ImGui::TextWrapped(
+			"Click Export, then choose the destination folder.");
+		ImGui::Text("Initial folder: %s", g_strLastExportDir.c_str());
+		ImGui::BeginDisabled(g_ramExportRequest.bActive);
+		if (ImGui::Button("Export")) {
+			g_ramExportRequest.bActive = true;
+			g_ramExportRequest.bMainRam0 = bMainRam0;
+			g_ramExportRequest.bMainRam1 = bMainRam1;
+			g_ramExportRequest.bFastTVRam = bFastTVRam;
+			g_ramExportRequest.bSlowTVRam = bSlowTVRam;
+			g_ramExportRequest.bGVRam0 = bGVRam0;
+			g_ramExportRequest.bGVRam1 = bGVRam1;
+			g_ramExportRequest.bGVRam2 = bGVRam2;
+			g_ramExportRequest.bSubRam = bSubRam;
+			g_ramExportRequest.bExRam0 = bExRam0;
+			g_ramExportRequest.bExRam1 = bExRam1;
+			g_ramExportRequest.bFastTVRamUse = bFastTVRamUse;
+			g_ramExportRequest.bSubDisabled = bSubDisabled;
 			SDL_ShowOpenFolderDialog(
 				OnExportFolderSelected, NULL,
-				NULL, strExportDir.c_str(), false);
+				NULL, g_strLastExportDir.c_str(), false);
 		}
-		ImGui::SameLine();
-		if (ImGui::Button("Export")) {
-			// Create timestamped subfolder: X88000M_RAM_YYYYMMDD_HHMMSS/
-			char szTime[64];
-			{
-				time_t t = time(NULL);
-				struct tm* pTm = localtime(&t);
-				strftime(szTime, sizeof(szTime),
-					"X88000M_RAM_%Y%m%d_%H%M%S", pTm);
-			}
-			std::string fstrDir = strExportDir + szTime + "/";
-			mkdir(fstrDir.c_str(), 0755);
-			int nExported = 0;
-			FILE* fpt;
-			std::string fstrPath;
-
-			if (bMainRam0) {
-				fstrPath = fstrDir + "main0.ram";
-				fpt = fopen(fstrPath.c_str(), "wb");
-				if (fpt) {
-					fwrite(CPC88::Z80Main().GetMainRamPtr(),
-						0x8000, 1, fpt);
-					fclose(fpt);
-					nExported++;
-				}
-			}
-			if (bMainRam1) {
-				fstrPath = fstrDir + "main1.ram";
-				fpt = fopen(fstrPath.c_str(), "wb");
-				if (fpt) {
-					if (bFastTVRamUse) {
-						fwrite(CPC88::Z80Main().GetMainRamPtr() + 0x8000,
-							0x7000, 1, fpt);
-						fwrite(CPC88::Z80Main().GetFastTVRamPtr(),
-							0x1000, 1, fpt);
-					} else {
-						fwrite(CPC88::Z80Main().GetMainRamPtr() + 0x8000,
-							0x8000, 1, fpt);
-					}
-					fclose(fpt);
-					nExported++;
-				}
-			}
-			if (bFastTVRam && !bFastTVRamUse) {
-				fstrPath = fstrDir + "fast_tv.ram";
-				fpt = fopen(fstrPath.c_str(), "wb");
-				if (fpt) {
-					fwrite(CPC88::Z80Main().GetFastTVRamPtr(),
-						0x1000, 1, fpt);
-					fclose(fpt);
-					nExported++;
-				}
-			}
-			if (bSlowTVRam && bFastTVRamUse) {
-				fstrPath = fstrDir + "slow_tv.ram";
-				fpt = fopen(fstrPath.c_str(), "wb");
-				if (fpt) {
-					fwrite(CPC88::Z80Main().GetMainRamPtr() + 0xF000,
-						0x1000, 1, fpt);
-					fclose(fpt);
-					nExported++;
-				}
-			}
-			if (bGVRam0) {
-				fstrPath = fstrDir + "gv0.ram";
-				fpt = fopen(fstrPath.c_str(), "wb");
-				if (fpt) {
-					fwrite(CPC88::Z80Main().GetGVRamPtr(0),
-						0x4000, 1, fpt);
-					fclose(fpt);
-					nExported++;
-				}
-			}
-			if (bGVRam1) {
-				fstrPath = fstrDir + "gv1.ram";
-				fpt = fopen(fstrPath.c_str(), "wb");
-				if (fpt) {
-					fwrite(CPC88::Z80Main().GetGVRamPtr(1),
-						0x4000, 1, fpt);
-					fclose(fpt);
-					nExported++;
-				}
-			}
-			if (bGVRam2) {
-				fstrPath = fstrDir + "gv2.ram";
-				fpt = fopen(fstrPath.c_str(), "wb");
-				if (fpt) {
-					fwrite(CPC88::Z80Main().GetGVRamPtr(2),
-						0x4000, 1, fpt);
-					fclose(fpt);
-					nExported++;
-				}
-			}
-			if (bSubRam && !bSubDisabled) {
-				fstrPath = fstrDir + "sub.ram";
-				fpt = fopen(fstrPath.c_str(), "wb");
-				if (fpt) {
-					fwrite(CPC88::Z80Sub().GetSubRamPtr(),
-						0x4000, 1, fpt);
-					fclose(fpt);
-					nExported++;
-				}
-			}
-			if (bExRam0) {
-				fstrPath = fstrDir + "ex0.ram";
-				fpt = fopen(fstrPath.c_str(), "wb");
-				if (fpt) {
-					fwrite(CPC88::Z80Main().GetExRamPtr(0),
-						0x8000 * 4, 1, fpt);
-					fclose(fpt);
-					nExported++;
-				}
-			}
-			if (bExRam1) {
-				fstrPath = fstrDir + "ex1.ram";
-				fpt = fopen(fstrPath.c_str(), "wb");
-				if (fpt) {
-					fwrite(CPC88::Z80Main().GetExRamPtr(1),
-						0x8000 * 4, 1, fpt);
-					fclose(fpt);
-					nExported++;
-				}
-			}
-
-			char szMsg[256];
-			snprintf(szMsg, sizeof(szMsg),
-				"Exported %d file(s) to %s", nExported, fstrDir.c_str());
-			strStatus = szMsg;
-		}
+		ImGui::EndDisabled();
 
 		ImGui::EndDisabled();
 
-		if (!strStatus.empty()) {
-			ImGui::TextWrapped("%s", strStatus.c_str());
+		if (g_ramExportRequest.bActive) {
+			ImGui::TextDisabled("Waiting for destination folder...");
+		}
+		if (!g_strRamExportStatus.empty()) {
+			ImGui::TextWrapped("%s", g_strRamExportStatus.c_str());
 		}
 		if (!bDebugMode || !bStopped) {
 			ImGui::TextDisabled("(stop debugger first)");
@@ -2900,17 +2910,9 @@ void UpdateWindowTitle(SDL_Window* pWindow, bool bCoreReady, bool bPauseEmulatio
 	if (pWindow == NULL) {
 		return;
 	}
-	std::string strTitle = "X88000 SDL3";
-	if (!bCoreReady) {
-		strTitle += " [ROM not found]";
-	} else if (bPauseEmulation) {
-		strTitle += " [Paused]";
-	}
-	if (!g_strLastMediaStatus.empty()) {
-		strTitle += " - ";
-		strTitle += g_strLastMediaStatus;
-	}
-	SDL_SetWindowTitle(pWindow, strTitle.c_str());
+	(void)bCoreReady;
+	(void)bPauseEmulation;
+	SDL_SetWindowTitle(pWindow, kMainWindowTitle);
 }
 
 void ToggleFullscreen(SDL_Window* pWindow)
@@ -3371,7 +3373,7 @@ int main(int argc, char** argv) {
 	int nInitialWindowX = settings.GetInt("window.x", SDL_WINDOWPOS_CENTERED);
 	int nInitialWindowY = settings.GetInt("window.y", SDL_WINDOWPOS_CENTERED);
 	SDL_Window* pWindow = SDL_CreateWindow(
-		"X88000 SDL3 Frontend (Prototype)",
+		kMainWindowTitle,
 		nInitialWindowW,
 		nInitialWindowH,
 		SDL_WINDOW_RESIZABLE);
@@ -3593,6 +3595,31 @@ int main(int argc, char** argv) {
 			if (!g_strPendingScreenshotPath.empty()) {
 				DoSaveScreenshot(g_strPendingScreenshotPath);
 				g_strPendingScreenshotPath.clear();
+			}
+		}
+		// Process pending RAM export folder selection
+		{
+			bool bResolved = false;
+			bool bAccepted = false;
+			std::string strExportDir;
+			{
+				std::lock_guard<std::mutex> lock(g_mtxExportDir);
+				if (g_bExportFolderDialogResolved) {
+					bResolved = true;
+					bAccepted = g_bExportFolderDialogAccepted;
+					strExportDir = g_strPendingExportDir;
+					g_bExportFolderDialogResolved = false;
+					g_bExportFolderDialogAccepted = false;
+					g_strPendingExportDir.clear();
+				}
+			}
+			if (bResolved && g_ramExportRequest.bActive) {
+				if (bAccepted) {
+					g_strLastExportDir = strExportDir;
+					g_strRamExportStatus =
+						ExportSelectedRam(strExportDir, g_ramExportRequest);
+				}
+				g_ramExportRequest.bActive = false;
 			}
 		}
 		// Process pending memory image load
