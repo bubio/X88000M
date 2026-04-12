@@ -101,7 +101,7 @@ uint8_t CX88ScreenDrawer::m_abtBmi2[sizeof(BITMAPINFOHEADER)+sizeof(uint32_t)*3]
 
 BITMAPINFO* CX88ScreenDrawer::m_pbmiScreen2;
 
-#elif defined(X88_GUI_GTK) || defined(X88_GUI_SDL3)
+#elif defined(X88_GUI_SDL3)
 
 // color table
 
@@ -230,7 +230,7 @@ bool CX88ScreenDrawer::Create(CPC88& pc88, bool bInterlace) {
 	}
 	ReleaseDC(HWND_DESKTOP, hdc);
 
-#elif defined(X88_GUI_GTK) || defined(X88_GUI_SDL3)
+#elif defined(X88_GUI_SDL3)
 
 	memset(m_aColorTable, 0, sizeof(m_aColorTable));
 	for (int nPalNo = 0; nPalNo < 16; nPalNo++) {
@@ -270,7 +270,7 @@ bool CX88ScreenDrawer::Destroy() {
 		m_pbtScreenDataBits2 = m_pbtScreenDataBits2Top = NULL;
 	}
 
-#elif defined(X88_GUI_GTK) || defined(X88_GUI_SDL3)
+#elif defined(X88_GUI_SDL3)
 
 	if (m_pbtScreenDataBits != NULL) {
 		delete [] m_pbtScreenDataBits;
@@ -1782,7 +1782,7 @@ bool CX88ScreenDrawer::UpdatePalette() {
 		m_prgbPalettes[nPalNo2].rgbBlue  = uint8_t(
 			(nPalB << 5) | (nPalB << 2) | (nPalB >> 1));
 
-#elif defined(X88_GUI_GTK) || defined(X88_GUI_SDL3)
+#elif defined(X88_GUI_SDL3)
 
 		m_aColorTable[nPalNo2].red = (uint16_t)(
 			(((nPalR << 5) | (nPalR << 2) | (nPalR >> 1)) & 0xFF)*0x0101);
@@ -1853,7 +1853,7 @@ bool CX88ScreenDrawer::DrawScreenVAB() {
 		}
 		ReleaseDC(HWND_DESKTOP, hdc);
 
-#elif defined(X88_GUI_GTK) || defined(X88_GUI_SDL3)
+#elif defined(X88_GUI_SDL3)
 
 		m_pbtScreenDataBits2 = m_pbtScreenDataBits2Top =
 			new uint8_t[LINELEN2*400];
@@ -1892,7 +1892,7 @@ bool CX88ScreenDrawer::DrawScreenVAB() {
 			*((uint16_t*)pbtBits) = wPixelBits;
 			pbtBits += sizeof(uint16_t);
 
-#elif defined(X88_GUI_GTK) || defined(X88_GUI_SDL3)
+#elif defined(X88_GUI_SDL3)
 
 			unsigned nRed = (nPixelVAB & 0x03E0) >> 2,
 				nGreen = (nPixelVAB & 0xFC00) >> 8,

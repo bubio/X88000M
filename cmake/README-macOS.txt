@@ -4,7 +4,7 @@ Preferred location for ROM files and X88000.ini:
   ~/Library/Application Support/X88000M/
 
 Optional self-contained layout:
-  X88000.app/Contents/Resources/
+  X88000M.app/Contents/Resources/
 
 Typical ROM filenames:
   pc88.rom

@@ -1,11 +1,10 @@
 ////////////////////////////////////////////////////////////
 // SDL3 frontend persistent settings
 //
-// Thin wrapper around CX88EnvFile (the same INI reader/writer
-// used by the legacy GTK frontend) so that both frontends share
-// a single X88000.ini file. Settings created by the SDL3 frontend
-// live in their own [sdl3] section to avoid colliding with the
-// legacy [option] section.
+// Thin wrapper around CX88EnvFile so the frontend can share a
+// single X88000.ini file with the existing core settings.
+// Settings created by the SDL3 frontend live in their own [sdl3]
+// section to avoid colliding with the legacy [option] section.
 
 #ifndef Sdl3Settings_DEFINED
 #define Sdl3Settings_DEFINED

@@ -72,7 +72,7 @@ public:
 		SYSPAL_COUNT = 20
 	};
 
-#elif defined(X88_GUI_GTK) || defined(X88_GUI_SDL3)
+#elif defined(X88_GUI_SDL3)
 
 	// bit count / line length / line step
 	enum {
@@ -135,7 +135,7 @@ protected:
 	// screen DIB2-BITMAPINFO
 	static BITMAPINFO* m_pbmiScreen2;
 
-#elif defined(X88_GUI_GTK) || defined(X88_GUI_SDL3)
+#elif defined(X88_GUI_SDL3)
 
 	// color table
 	static SX88Color m_aColorTable[COLOR_COUNT];
@@ -208,7 +208,7 @@ public:
 		return m_pbmiScreen2;
 	}
 
-#elif defined(X88_GUI_GTK) || defined(X88_GUI_SDL3)
+#elif defined(X88_GUI_SDL3)
 
 	// get color table
 	static SX88Color* GetColorTable() {

@@ -2,8 +2,8 @@
 // X88000 Environment Settings File (INI reader/writer)
 //
 // Originally part of X88Option.h. Extracted into its own
-// translation unit so that frontends other than the legacy
-// GTK build can also read and write the same X88000.ini
+// translation unit so that multiple frontends can also read
+// and write the same X88000.ini
 // without pulling in the option-processing classes.
 //
 // Written by Manuke

@@ -1,134 +1,46 @@
 # X88000M
 
-X88000M は、Manuke 氏による PC-8801 エミュレータ `X88000` の公開ソースをベースにしたリポジトリです。
+X88000M は、Manuke 氏による PC-8801 エミュレータ `X88000` をベースにした macOS 向け移植版です。現在のアプリ本体は `SDL3 + Dear ImGui` ベースの `X88000M.app` です。
 
-このリポジトリはオリジナルの Linux 版ソースを土台にしつつ、macOS でもビルドできるように最小限の調整を加えています。元の説明文書は [X88000Src.txt](./src/X88000Src.txt) に含まれています。
+メニュー操作、ドラッグ&ドロップ、メディア管理、デバッガをまとめて使えるように整理してあり、「まず起動して遊びたい」用途にも、「動作確認や解析に使いたい」用途にも向いています。
 
-エミュレータ本体のソースコードは [`src/`](./src) 配下にまとめてあります。リポジトリのルートには README、ライセンス、CMake 設定を置いています。
+## X88000M の強み
 
-## 概要
+- **SDL3 + Dear ImGui ベースの単一 frontend**
+  macOS で扱いやすい構成に整理しており、アプリ本体は `X88000M.app` に統一しています。
+- **メディア操作が速い**
+  `D88`、`T88`、`CMT` をメニュー、ドラッグ&ドロップ、起動引数から読み込めます。
+- **D88 の複数イメージ管理に対応**
+  `Disk Manager` で D88 内のイメージを一覧し、Drive 1〜4 に割り当てできます。
+- **デバッグ用途にも強い**
+  別ウィンドウのデバッガ、逆アセンブル、メモリダンプ、ブレークポイント、RAM エクスポート、実行ログ記録を利用できます。
+- **普段使いに必要な機能を搭載**
+  BASIC モード切り替え、4/8 MHz 切り替え、環境設定、スクリーンショット保存、画面テキストのコピー、テキスト貼り付け、プリンタプレビュー、フルスクリーンに対応しています。
+- **設定を保持**
+  ウィンドウサイズや各種設定は `~/Library/Application Support/X88000M/X88000.ini` に保存されます。
 
-- 作者: Manuke
-- 元文書の表記: `Written by Manuke 1998-2018`
-- ベース: X88000 Linux 版ソース
-- GUI:
-  - Windows 版は Win32 API / DirectX
-  - Linux 版は X-Window / GTK+ 2.8 以降
-- このリポジトリは Linux 版ベースで管理
-
-`X88000Src.txt` によると、環境依存部分は主に `X88...` で始まるファイル群で、それ以外のエミュレーション本体は各環境でほぼ共通です。
-
-## 現在の状態
-
-- Linux 版ソースをベースにしています。
-- macOS の主系統フロントエンドは `SDL3 + Dear ImGui` です。
-- macOS の通常ビルドでは GTK+ / GLib は不要です。
-- レガシー GTK フロントエンドは必要な場合のみ `-DX88000M_BUILD_LEGACY_GTK=ON` で有効化できます。
-- OPNA (`YM2608`) エミュレーションは upstream 文書でも「大して機能してません」とされており、現状でも未完成です。
-- BEEP / PCG のロジックはありますが、実際の音声出力実装は Windows の DirectSound 前提で、非 Windows 環境では音は未実装です。
-
-## ビルド
-
-### SDL3 frontend (default)
-
-`SDL3`、`pkg-config` または `X88000M_FETCH_SDL3=ON`、`cmake` が必要です。
-Dear ImGui は `third_party/imgui/` を優先し、無い場合は `X88000M_FETCH_IMGUI=ON` で自動取得します。
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target X88000SDL3 -j
-```
-
-macOS では `build/X88000SDL3.app` が生成されます。
-端末から直接起動する場合は `build/X88000SDL3.app/Contents/MacOS/X88000SDL3` を実行できます。
-
-### Legacy GTK frontend (optional)
-
-`gtk+-2.0` の開発環境、`pkg-config`、`cmake` が必要です。
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DX88000M_BUILD_LEGACY_GTK=ON
-cmake --build build --target X88000 -j
-```
-
-macOS では `build/X88000.app` が生成されます。端末から直接起動する場合は `build/X88000.app/Contents/MacOS/X88000` を使えます。
-この GTK2 ベース実装では、メニューは macOS の上部メニューバーではなくアプリウィンドウ内に表示されます。
-
-upstream 由来の [`src/Makefile`](./src/Makefile) は参考用として残していますが、このリポジトリでは CMake を正規のビルド入口としています。
-
-## SDL3 frontend (WIP)
-
-`SDL3 + ImGui` 移行に向けて、`X88000SDL3` ターゲットを追加しています。
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target X88000SDL3 -j
-```
-
-macOS では `build/X88000SDL3.app` が生成されます。
-端末から直接起動する場合は `build/X88000SDL3.app/Contents/MacOS/X88000SDL3` を実行できます。
-
-現時点では SDL3 の独立プロトタイプで、エミュレーション core との接続は最小限です。
-ビルド構成として `x88core`（PC88/Z80/DiskImage/TapeImage などの共有 core ライブラリ）を `X88000SDL3` からリンクし、ROM が見つかった場合に `CPC88::Initialize/Reset/Execute` を SDL3 ループ内で呼ぶブリッジまで実装しています。
-また、SDL3 のキーボード状態から PC-8801 キーマトリクスへ反映する入力マッピング（英数字、カーソル、テンキー、ファンクションキー、修飾キー）を実装しています。
-実行ループは 60fps 相当の固定フレームペースで動作し、表示は 640x400 をウィンドウ内にレターボックス表示します。
-
-現在の通常機能（SDL3 側）:
+## 主な機能
 
 - ROM 読み込みと実行
-- D88 の挿入/イジェクト
-- T88/CMT の読み込み
-- ファイルダイアログからのメディア読み込み（`Media` メニュー）
-- ディスクイメージ管理ウィンドウ（`Media -> Disk Manager...`）— D88 内の複数イメージをツリー表示し、各ディスクを Drive 1〜4 に割り当て可能
-- テープイメージ管理ウィンドウ（`Media -> Tape Manager...`）— ロード/Erase/FWD/REW 操作と進行状況表示
-- 環境設定ウィンドウ（`System -> Environment Settings...`）— BASIC モード、CPU クロック、ドライブ数、Wait/Old/PCG 等を設定
-- BASIC モード / クロックのクイックスイッチ（`System -> BASIC Mode` / `Clock`）
-- 起動引数でのメディア指定: `--disk1=...` `--disk2=...` `--tape=...`
-- ファイルのドラッグ&ドロップ読み込み（D88/T88/CMT、Shift+drop で Drive 2 / Cmd+Ctrl+drop で Drive 1）
-- 設定の永続化: ウィンドウサイズや環境設定をレガシー GTK 版と同じ `~/Library/Application Support/X88000M/X88000.ini` に保存
-- 実行中ショートカット:
-  - `Ctrl+O`: メディアファイルを開く
-  - `Ctrl+R`: リセット
-  - `Ctrl+P`: 一時停止/再開
-  - `Ctrl+1` / `Ctrl+2`: Drive1/Drive2 イジェクト
-  - `Ctrl+Enter`: フルスクリーン切り替え
+- `D88` の挿入・イジェクト
+- `T88` / `CMT` の読み込みとテープ操作
+- メディアファイルのドラッグ&ドロップ
+- 起動引数 `--disk1=...` `--disk2=...` `--tape=...`
+- `Disk Manager` / `Tape Manager`
+- `Environment Settings`
+- BEEP / PCG / OPNA の音声出力
+- `Debug Window` / `Record Execution Log` / `Export RAM`
+- スクリーンショット保存、クリップボード連携、プリンタプレビュー
 
-Dear ImGui は `third_party/imgui/` に source があればそれを使い、無い場合は CMake の `FetchContent` で自動取得します（デフォルト有効）。
+## 使い始める前に
 
-`SDL3` / `Dear ImGui` を CMake で自動取得したい場合は、次のオプションを使えます。
+`X88000M` には ROM イメージは含まれていません。macOS では、ROM 一式を次の場所に置くのが一番簡単です。
 
-```sh
-cmake -S . -B build \
-  -DX88000M_FETCH_SDL3=ON \
-  -DX88000M_FETCH_IMGUI=ON
-```
+- `~/Library/Application Support/X88000M/`
 
-`X88000M_FETCH_SDL3` のデフォルトは `OFF`、`X88000M_FETCH_IMGUI` のデフォルトは `ON` です。ローカルに `pkg-config` 経由の `sdl3` と `third_party/imgui` がある場合はそちらを優先します。
+端末から起動する場合はカレントディレクトリからも探します。必要に応じて `X88_ROM_DIR` 環境変数でも ROM ディレクトリを指定できます。
 
-SDL3 プロトタイプが参照する ROM ディレクトリは次の順です。
-
-- `X88_ROM_DIR` 環境変数
-- カレントディレクトリ
-- macOS の `~/Library/Application Support/X88000M/`
-
-## 実行に必要な ROM
-
-ROM イメージは同梱していません。
-
-コード上は、システム ROM を次の順に探します。
-
-- 現在の作業ディレクトリ
-- macOS では `~/Library/Application Support/X88000M/`
-- 実行ファイルに対応する resource ディレクトリ
-- 実行ファイルのあるディレクトリ
-
-そのため、端末から起動する場合は ROM 一式をカレントディレクトリに置くか、macOS では `~/Library/Application Support/X88000M/` に配置すると扱いやすくなります。`.app` を Finder から起動する場合も、基本的にはこの `Application Support` 配下へ置く運用を想定しています。
-
-必要なら、`build/X88000.app/Contents/Resources/` に ROM を置いて self-contained な bundle として扱うこともできます。
-
-設定ファイル `X88000.ini` と `Debug.log` は、macOS では `~/Library/Application Support/X88000M/` に保存されます。
-
-代表的に参照されるファイル名は以下です。
+代表的に参照されるファイル名:
 
 - `pc88.rom`
 - `n88.rom`
@@ -145,27 +57,59 @@ ROM イメージは同梱していません。
 
 `pc88.rom` がある場合はそこからまとめて読み込み、無い場合は分割された ROM 名を順に探します。
 
-## ソース構成
+## 基本操作
 
-`X88000Src.txt` では、クラス群はおおむね次のように整理されています。
+- `Media -> Open Media...` でディスクやテープを開けます。
+- `D88` / `T88` / `CMT` をウィンドウへドラッグ&ドロップしても読み込めます。
+- `System -> Environment Settings...` から BASIC モード、CPU クロック、ドライブ数、各種オプションを変更できます。
+- `Debug -> Debug Window...` で別ウィンドウのデバッガを開けます。
 
-- Z80 エミュレータクラスライブラリ
-- PC-8801 エミュレータクラス群
-- ディスク / テープイメージクラス群
-- パラレルデバイスクラス群
-- X88000 固有の GUI / 管理クラス群
+よく使うショートカット:
 
-いまのリポジトリでもこの構成はほぼそのまま維持されています。
+- `Ctrl+O`: メディアを開く
+- `Ctrl+R`: リセット
+- `Ctrl+P`: 一時停止 / 再開
+- `Ctrl+1` / `Ctrl+2`: Drive 1 / 2 をイジェクト
+- `Ctrl+Enter`: フルスクリーン切り替え
 
-## リポジトリ構成
+ドラッグ&ドロップ時は `Shift+drop` で Drive 2、`Cmd+Ctrl+drop` で Drive 1 に優先投入できます。
 
-- [`CMakeLists.txt`](./CMakeLists.txt): このリポジトリのビルド設定
-- [`src/`](./src): エミュレータ本体のソースコード、upstream の説明文書、元の `Makefile`
-- [`README.md`](./README.md): このリポジトリ向けの概要
-- [`LICENSE`](./LICENSE): upstream のライセンス告知
+## macOS でソースからビルドする場合
+
+`cmake` が必要です。ローカルの `SDL3` を使う場合は `pkg-config` も必要です。Dear ImGui は `third_party/imgui/` を優先し、無い場合はデフォルトで自動取得します (`X88000M_FETCH_IMGUI=ON`)。
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target X88000M -j
+```
+
+`SDL3` をローカルに入れていない場合は、次のように自動取得できます。
+
+```sh
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DX88000M_FETCH_SDL3=ON
+cmake --build build --target X88000M -j
+```
+
+`X88000M_FETCH_IMGUI=ON` は現在のデフォルト値なので、通常は明示しなくて構いません。
+
+macOS では `build/X88000M.app` が生成されます。端末から直接起動する場合は `build/X88000M.app/Contents/MacOS/X88000M` を実行してください。
+
+Linux を含め、frontend は SDL3 + Dear ImGui のみを前提にしています。
+
+## 現在の注意点
+
+- ROM イメージは同梱していません。
+- 互換性向上と細部の追い込みは継続中です。特に OPNA (`YM2608`) まわりは今後も改善対象です。
+- オリジナルの Linux 版 / Windows 版と完全に同一の挙動を保証するものではありません。
+
+## クレジット
+
+- Original X88000 by Manuke
+- macOS / SDL3+ImGui port maintained by bubio
+- オリジナル配布物の説明文書は [src/X88000Src.txt](./src/X88000Src.txt) に収録しています。
 
 ## ライセンス
 
 オリジナル配布物では、X88000 ソースは `PDS` (`Public Domain Software`) と表記されています。標準的な SPDX ライセンス識別子にそのまま対応するものではないため、このリポジトリでは upstream の文言を [LICENSE](./LICENSE) にそのまま収録しています。
-
-`CC0-1.0` や `The Unlicense` のような近い性格の標準ライセンスはありますが、このリポジトリでは upstream の文面を別ライセンスへ読み替えることはしていません。

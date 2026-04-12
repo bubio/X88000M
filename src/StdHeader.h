@@ -27,13 +27,6 @@
 // old-type function
 #pragma warning(disable : 4996)
 
-#ifdef WIN_GTK // WinGTK+ API
-
-// unreferenced local variable has been removed
-#pragma warning(disable : 4505)
-
-#endif // WIN_GTK
-
 #define X88_COMPILER_TEMPLATE_EXPLICIT_SUPPORT
 #define X88_COMPILER_TEMPLATE_STATICVAL_NORMAL
 
@@ -54,52 +47,23 @@
 
 #ifdef _WINDOWS // Windows Platform
 
-#ifndef WIN_GTK // Windows API
-
 #define X88_PLATFORM_WINDOWS
 #define X88_GUI_WINDOWS
 #define X88_ENCODE_WINDOWS
 #define X88_ENCODING_SOURCE_SJIS
 #define X88_ENCODING_GUI_SJIS
 
-#else // WinGTK+ API
-
-#define X88_PLATFORM_WINDOWS
-#define X88_GUI_GTK
-#define X88_GUI_GTK_USEIMAGE
-#define X88_GUI_GTK_NOKEYRELEASE
-#define X88_GUI_GTK_IGNORECHARRELEASE
-#define X88_ENCODE_WINDOWS
-#define X88_ENCODING_SOURCE_SJIS
-#define X88_ENCODING_GUI_UTF8
-#define X88_PRINTER_DRAW_CAIRO
-
-#endif // using API for Windows
-
 #else // UNIX Platform
 
 #define X88_PLATFORM_UNIX
 
-#ifdef X88_GUI_SDL3
+#ifndef X88_GUI_SDL3
+#define X88_GUI_SDL3
+#endif // X88_GUI_SDL3
 
 #define X88_ENCODE_ICONV
 #define X88_ENCODING_SOURCE_UTF8
 #define X88_ENCODING_GUI_UTF8
-
-#else // legacy GTK frontend
-
-#define X88_GUI_GTK
-#ifndef __APPLE__
-#define X88_GUI_GTK_USEXWINDOW
-#define X88_GUI_GTK_USEKEYMAP
-#endif // !__APPLE__
-#define X88_GUI_GTK_USEIM
-#define X88_ENCODE_GTK
-#define X88_ENCODING_SOURCE_UTF8
-#define X88_ENCODING_GUI_UTF8
-#define X88_PRINTER_DRAW_CAIRO
-
-#endif // X88_GUI_SDL3
 
 #endif // Platform
 
@@ -175,114 +139,6 @@ typedef unsigned long uint32_t;
 #include <dinput.h>
 
 typedef HWND CX88WndHandle;
-
-#elif defined(X88_GUI_GTK)
-
-#include <glib.h>
-#include <gtk/gtk.h>
-#include <gdk/gdkkeysyms.h>
-#include <pango/pango.h>
-#include <cairo.h>
-#include <cairo-pdf.h>
-
-#define IDOK		GTK_RESPONSE_OK
-#define IDCANCEL	GTK_RESPONSE_CANCEL
-#define IDYES		GTK_RESPONSE_YES
-#define IDNO		GTK_RESPONSE_NO
-
-#ifdef X88_GUI_GTK_USEXWINDOW
-
-#include <X11/Xlib.h>
-#include <X11/XKBlib.h>
-#include <gdk/gdkx.h>
-
-#endif // X88_GUI_GTK_USEXWINDOW
-
-#if G_BYTE_ORDER == G_LITTLE_ENDIAN
-#define X88_BYTEORDER_LITTLE_ENDIAN
-#else // G_BYTE_ORDER != G_LITTLE_ENDIAN
-#define X88_BYTEORDER_BIG_ENDIAN
-#endif // G_BYTE_ORDER
-
-typedef GtkWidget* CX88WndHandle;
-
-#ifdef X88_PLATFORM_WINDOWS
-
-#define NOGDICAPMASKS
-#define NOVIRTUALKEYCODES
-#define NOWINMESSAGES
-#define NOWINSTYLES
-#define NOSYSMETRICS
-#define NOMENUS
-#define NOICONS
-#define NOKEYSTATES
-#define NOSYSCOMMANDS
-#define NORASTEROPS
-#define NOSHOWWINDOW
-#define NOATOM
-#define NOCLIPBOARD
-#define NOCOLOR
-#define NOCTLMGR
-#define NODRAWTEXT
-#define NOGDI
-#define NOKERNEL
-#define NOUSER
-#define NOMB
-#define NOMEMMGR
-#define NOMETAFILE
-#define NOMINMAX
-#define NOMSG
-#define NOOPENFILE
-#define NOSCROLL
-#define NOSERVICE
-#define NOSOUND
-#define NOTEXTMETRIC
-#define NOWH
-#define NOWINOFFSETS
-#define NOCOMM
-#define NOKANJI
-#define NOHELP
-#define NOPROFILER
-#define NODEFERWINDOWPOS
-#define NOMCX
-
-#define WIN32_LEAN_AND_MEAN
-
-#include <windows.h>
-
-#define MSG				MSG_ERROR
-#define LRESULT			LRESULT_ERROR
-#define WPARAM			WPARAM_ERROR
-#define LPARAM			LPARAM_ERROR
-#define HWND			HWND_ERROR
-#define HMENU			HMENU_ERROR
-#define HICON			HICON_ERROR
-#define HCURSOR			HCURSOR_ERROR
-#define HACCEL			HACCEL_ERROR
-#define HDC				HDC_ERROR
-#define HGDIOBJ			HGDIOBJ_ERROR
-#define HPEN			HPEN_ERROR
-#define HBRUSH			HBRUSH_ERROR
-#define HBITMAP			HBITMAP_ERROR
-#define HFONT			HFONT_ERROR
-#define HPALETTE		HPALETTE_ERROR
-#define HENHMETAFILE	HENHMETAFILE_ERROR
-#define HMETAFILE		HMETAFILE_ERROR
-#define HMETAFILEPICT	HMETAFILEPICT_ERROR
-#define HRGN			HRGN_ERROR
-#define HIMC			HIMC_ERROR
-
-#elif defined(X88_PLATFORM_UNIX)
-
-#ifdef __CYGWIN__
-
-#define X_LOCALE
-#include <X11/Xlocale.h>
-#undef setlocale
-
-#endif // __CYGWIN__
-
-#endif // X88_PLATFORM
 
 #elif defined(X88_GUI_SDL3)
 

@@ -81,8 +81,8 @@ void RequestOpenTapeOnlyDialog(SDL_Window* pWindow);
 // Environment settings (BASIC mode, base clock, dip-switches)
 //
 // These settings are persisted under the legacy [option] section of
-// X88000.ini so that the SDL3 frontend and legacy GTK frontend share
-// the same configuration file.
+// X88000.ini so the SDL3 frontend stays compatible with the existing
+// core option keys.
 
 const char SECTION_OPTION[] = "option";
 
@@ -698,7 +698,7 @@ void DrawDebugMainWindow(bool& bShow)
 
 		// Mnemonic and register display
 		if (bDebugMode && bStopped && pZ80A != NULL) {
-			// Mnemonic at current PC (GTK format: 0XXXXH  MNEMONIC)
+			// Mnemonic at current PC (legacy format: 0XXXXH  MNEMONIC)
 			uint16_t wPC = CPC88::GetDebugPC();
 			const char* pszMnemonic = pZ80A->GetMnemonic();
 			// Expand tabs in mnemonic (tab stop = 8)
@@ -719,7 +719,7 @@ void DrawDebugMainWindow(bool& bShow)
 			ImGui::Text(" 0%04XH  %s", wPC, strMne.c_str());
 			ImGui::Separator();
 
-			// Register display: GTK-style 3-line horizontal layout
+				// Register display: legacy 3-line horizontal layout
 			ImVec4 colLabel(0.4f, 0.4f, 0.9f, 1.0f); // blue labels
 
 			// Line 1: F A BC DE HL IX IY
@@ -1211,7 +1211,7 @@ bool DoSaveScreenshot(const std::string& fstrPath)
 
 bool DoCopyScreenText()
 {
-	// Match GTK implementation: X88000.cpp DoClipboardCopyText() lines 1239-1334
+	// Keep the legacy clipboard text extraction behavior from X88000.cpp.
 	int nWidth = CPC88::Crtc().IsWidth80() ? 80 : 40;
 	int nHeight = CPC88::Crtc().IsHeight25() ? 25 : 20;
 	std::string strText;
@@ -3680,7 +3680,7 @@ int main(int argc, char** argv) {
 		}
 		if (bCoreReady && !bPauseEmulation) {
 			if (!g_queueIMEChar.empty()) {
-				// Paste text: emulate GTK's 2ms-granularity key injection
+				// Paste text with the same 2ms-granularity key injection as the legacy frontend.
 				// by splitting frame execution into EXECUTE_UNIT_TIME chunks.
 				enum { EXEC_UNIT = 2 }; // ms, matches CX88000::EXECUTE_UNIT_TIME
 				enum { IME_WAIT = 200 }; // ms per character
@@ -3750,7 +3750,7 @@ int main(int argc, char** argv) {
 					}
 					ImGui::Separator();
 
-					// BASIC Mode quick switch (matches legacy GTK submenu).
+					// BASIC Mode quick switch (matches the legacy submenu layout).
 					int nCurBasicChoice = BasicChoiceFromMode(
 						CPC88::GetBasicMode(),
 						CPC88::IsHighSpeedMode());
@@ -4155,7 +4155,7 @@ int main(int argc, char** argv) {
 				0, ImGui::GetMainViewport(),
 				ImGuiDockNodeFlags_PassthruCentralNode);
 
-			// Build initial layout on first frame (matches GTK-style arrangement).
+			// Build initial layout on first frame (matching the legacy panel arrangement).
 			// Once imgui.ini exists, this block is skipped and the saved
 			// layout is used instead.
 			if (dbgWin.bNeedInitLayout) {

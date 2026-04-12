@@ -6,7 +6,7 @@
 ////////////////////////////////////////////////////////////
 // include
 
-#if defined(WIN32) && !defined(WIN_GTK)
+#if defined(WIN32)
 
 #define INITGUID
 #define DIRECTINPUT_VERSION 0x0300
@@ -14,4 +14,4 @@
 #include <ddraw.h>
 #include <dinput.h>
 
-#endif // WIN32 && !WIN_GTK
+#endif // WIN32
