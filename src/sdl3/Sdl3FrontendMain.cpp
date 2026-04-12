@@ -1275,7 +1275,7 @@ std::string g_strLastExportDir;
 std::string g_strRamExportStatus;
 SRamExportRequest g_ramExportRequest = {};
 
-std::string GetDefaultExportDir()
+std::string GetDefaultFolderDialogDir()
 {
 	const char* pHome = getenv("HOME");
 	if (pHome && *pHome) {
@@ -1447,11 +1447,8 @@ void DrawExportRamWindow(bool& bShow)
 		ImGui::Separator();
 
 		if (g_strLastExportDir.empty()) {
-			g_strLastExportDir = GetDefaultExportDir();
+			g_strLastExportDir = GetDefaultFolderDialogDir();
 		}
-		ImGui::TextWrapped(
-			"Click Export, then choose the destination folder.");
-		ImGui::Text("Initial folder: %s", g_strLastExportDir.c_str());
 		ImGui::BeginDisabled(g_ramExportRequest.bActive);
 		if (ImGui::Button("Export")) {
 			g_ramExportRequest.bActive = true;
@@ -2255,7 +2252,28 @@ FILE* g_pfDebugLog = NULL;
 int   g_nDebugLogCol = 0;
 enum { DEBUGLOG_COLMAX = 8 };
 
-bool StartDebugLog()
+std::string g_strPendingDebugLogDir;
+std::mutex  g_mtxDebugLogDir;
+bool g_bDebugLogFolderDialogResolved = false;
+bool g_bDebugLogFolderDialogAccepted = false;
+bool g_bStartDebugLogAfterFolderPick = false;
+std::string g_strLastDebugLogDir;
+
+void SDLCALL OnDebugLogFolderSelected(void* userdata, const char* const* filelist, int filter)
+{
+	(void)userdata;
+	(void)filter;
+	std::lock_guard<std::mutex> lock(g_mtxDebugLogDir);
+	g_bDebugLogFolderDialogResolved = true;
+	g_bDebugLogFolderDialogAccepted = false;
+	g_strPendingDebugLogDir.clear();
+	if (filelist && filelist[0]) {
+		g_strPendingDebugLogDir = EnsureTrailingSlash(filelist[0]);
+		g_bDebugLogFolderDialogAccepted = true;
+	}
+}
+
+bool StartDebugLog(const std::string& fstrDir)
 {
 	if (g_pfDebugLog != NULL) return false;
 	char szTime[64];
@@ -2266,12 +2284,10 @@ bool StartDebugLog()
 			"X88000M_ExecTrace_%Y%m%d_%H%M%S.log", pTm);
 	}
 	std::string fstrPath;
-	const char* pHome = getenv("HOME");
-	if (pHome && *pHome) {
-		fstrPath = std::string(pHome) + "/Documents/" + szTime;
-	} else {
-		fstrPath = szTime;
-	}
+	std::string fstrDir2 = fstrDir.empty()
+		? GetDefaultFolderDialogDir()
+		: EnsureTrailingSlash(fstrDir);
+	fstrPath = fstrDir2 + szTime;
 	g_pfDebugLog = fopen(fstrPath.c_str(), "at");
 	if (g_pfDebugLog != NULL) {
 		g_nDebugLogCol = 0;
@@ -3622,6 +3638,30 @@ int main(int argc, char** argv) {
 				g_ramExportRequest.bActive = false;
 			}
 		}
+		// Process pending debug log folder selection
+		{
+			bool bResolved = false;
+			bool bAccepted = false;
+			std::string strDebugLogDir;
+			{
+				std::lock_guard<std::mutex> lock(g_mtxDebugLogDir);
+				if (g_bDebugLogFolderDialogResolved) {
+					bResolved = true;
+					bAccepted = g_bDebugLogFolderDialogAccepted;
+					strDebugLogDir = g_strPendingDebugLogDir;
+					g_bDebugLogFolderDialogResolved = false;
+					g_bDebugLogFolderDialogAccepted = false;
+					g_strPendingDebugLogDir.clear();
+				}
+			}
+			if (bResolved && g_bStartDebugLogAfterFolderPick) {
+				if (bAccepted) {
+					g_strLastDebugLogDir = strDebugLogDir;
+					StartDebugLog(strDebugLogDir);
+				}
+				g_bStartDebugLogAfterFolderPick = false;
+			}
+		}
 		// Process pending memory image load
 		{
 			std::lock_guard<std::mutex> lock(g_mtxMemoryImage);
@@ -4081,13 +4121,19 @@ int main(int argc, char** argv) {
 					ImGui::Separator();
 
 					// Record Execution Log
-					ImGui::BeginDisabled(!bDebugMode);
+					ImGui::BeginDisabled(!bDebugMode || g_bStartDebugLogAfterFolderPick);
 					bool bLogging = IsDebugLogging();
 					if (ImGui::MenuItem("Record Execution Log", NULL, bLogging)) {
 						if (bLogging) {
 							EndDebugLog();
 						} else {
-							StartDebugLog();
+							if (g_strLastDebugLogDir.empty()) {
+								g_strLastDebugLogDir = GetDefaultFolderDialogDir();
+							}
+							g_bStartDebugLogAfterFolderPick = true;
+							SDL_ShowOpenFolderDialog(
+								OnDebugLogFolderSelected, NULL,
+								dbgWin.pWindow, g_strLastDebugLogDir.c_str(), false);
 						}
 					}
 					ImGui::EndDisabled();
