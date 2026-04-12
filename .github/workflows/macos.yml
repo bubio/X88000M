@@ -1,4 +1,4 @@
-name: macOS Build
+name: macOS Universal Build
 
 on:
   push:
@@ -36,21 +36,26 @@ jobs:
       - name: Build
         run: cmake --build build --target X88000M --parallel
 
+      - name: Verify universal binary
+        run: |
+          lipo -info build/X88000M.app/Contents/MacOS/X88000M
+          otool -l build/X88000M.app/Contents/MacOS/X88000M | grep -A3 LC_BUILD_VERSION
+
       - name: Package app
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
             build/X88000M.app \
-            build/X88000M-macos.zip
+            build/X88000M-macos-universal.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: X88000M-macos
-          path: build/X88000M-macos.zip
+          name: X88000M-macos-universal
+          path: build/X88000M-macos-universal.zip
           if-no-files-found: error
 
       - name: Upload release asset
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v3
         with:
-          files: build/X88000M-macos.zip
+          files: build/X88000M-macos-universal.zip

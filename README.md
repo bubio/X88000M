@@ -1,10 +1,30 @@
 # X88000M
 
-X88000M は、Manuke 氏による PC-8801 エミュレータ `X88000` をベースにした macOS 向け移植版です。現在のアプリ本体は `SDL3 + Dear ImGui` ベースの `X88000M.app` です。
+<p align="center">
+  <img src="docs/AppIcon.png" alt="X88000M" width="128" height="128">
+</p>
 
-メニュー操作、ドラッグ&ドロップ、メディア管理、デバッガをまとめて使えるように整理してあり、「まず起動して遊びたい」用途にも、「動作確認や解析に使いたい」用途にも向いています。
+X88000M は、Manuke 氏による PC-8801 エミュレータ `X88000` をベースにした macOS 向け移植版です。
 
-## X88000M の強み
+<p align="center">
+  <a href="https://github.com/bubio/X88000M/releases/latest">
+    <img src="https://img.shields.io/github/v/release/bubio/X88000M" alt="Latest Release">
+  </a>
+  <a href="https://github.com/bubio/X88000M/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/bubio/X88000M" alt="License">
+  </a>
+  <a href="https://github.com/bubio/X88000M/releases/latest">
+    <img src="https://img.shields.io/github/downloads/bubio/X88000M/total.svg" alt="Downloads">
+  </a>
+</p>
+
+X88000のLinux版からGTK 2.0依存を排除し、SDL3 + Dear ImGuiで構築しています。
+
+## About
+
+<p align="center">
+  <img src="docs/Screenshot_Main.png" alt="X88000M Screenhot">
+</p>
 
 - **SDL3 + Dear ImGui ベースの単一 frontend**
   macOS で扱いやすい構成に整理しており、アプリ本体は `X88000M.app` に統一しています。
@@ -12,14 +32,19 @@ X88000M は、Manuke 氏による PC-8801 エミュレータ `X88000` をベー�
   `D88`、`T88`、`CMT` をメニュー、ドラッグ&ドロップ、起動引数から読み込めます。
 - **D88 の複数イメージ管理に対応**
   `Disk Manager` で D88 内のイメージを一覧し、Drive 1〜4 に割り当てできます。
-- **デバッグ用途にも強い**
-  別ウィンドウのデバッガ、逆アセンブル、メモリダンプ、ブレークポイント、RAM エクスポート、実行ログ記録を利用できます。
 - **普段使いに必要な機能を搭載**
   BASIC モード切り替え、4/8 MHz 切り替え、環境設定、スクリーンショット保存、画面テキストのコピー、テキスト貼り付け、プリンタプレビュー、フルスクリーンに対応しています。
-- **設定を保持**
-  ウィンドウサイズや各種設定は `~/Library/Application Support/X88000M/X88000.ini` に保存されます。
+- **YM2203に対応**
+  オリジナルのX88000は音源部分を搭載していない、YM2203のエミュレーション機能を搭載しています。
+- **デバッグ用途にも強い**
+  別ウィンドウのデバッガ、逆アセンブル、メモリダンプ、ブレークポイント、RAM エクスポート、実行ログ記録を利用できます。
 
-## 主な機能
+<p align="center">
+  <img src="docs/Screenshot_Debugger.png" alt="X88000M Debugger Screenhot">
+</p>
+
+
+## Features
 
 - ROM 読み込みと実行
 - `D88` の挿入・イジェクト
@@ -31,6 +56,11 @@ X88000M は、Manuke 氏による PC-8801 エミュレータ `X88000` をベー�
 - BEEP / PCG / OPNA の音声出力
 - `Debug Window` / `Record Execution Log` / `Export RAM`
 - スクリーンショット保存、クリップボード連携、プリンタプレビュー
+
+## System Requirements
+
+- macOS 13.5 (Ventura) 以降
+- Apple Silicon または Intel Mac
 
 ## 使い始める前に
 
@@ -101,7 +131,8 @@ Linux を含め、frontend は SDL3 + Dear ImGui のみを前提にしていま�
 ## 現在の注意点
 
 - ROM イメージは同梱していません。
-- 互換性向上と細部の追い込みは継続中です。特に OPNA (`YM2608`) まわりは今後も改善対象です。
+- YM2608 (OPNA)には対応していません。
+- YM2203 (OPN)の実装はPDSライセンスを維持するためデータシートなど公式に得られる情報で作成しています。このための音の再現性は低いです。
 - オリジナルの Linux 版 / Windows 版と完全に同一の挙動を保証するものではありません。
 
 ## クレジット

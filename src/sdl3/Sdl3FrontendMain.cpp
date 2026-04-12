@@ -67,6 +67,8 @@ std::vector<SDiskFileRecord> g_vDiskFileRecords;
 const char kMainWindowTitle[] = "X88000M";
 
 void UpdateWindowTitle(SDL_Window* pWindow, bool bCoreReady, bool bPauseEmulation);
+void DisableRendererVSync(SDL_Renderer* pRenderer, const char* pszRendererName);
+int GetFrameExecuteClock();
 // Forward declarations for helpers used by ImGui draw functions further up the file.
 void SetMediaStatus(const std::string& strStatus);
 bool MountDiskImageByIndex(int nDrive, int nDiskImageIndex);
@@ -76,6 +78,22 @@ void EraseAllDiskImages();
 int  FindDriveHoldingDiskIndex(int nDiskImageIndex);
 void RequestOpenDiskOnlyDialog(SDL_Window* pWindow, int nDrive);
 void RequestOpenTapeOnlyDialog(SDL_Window* pWindow);
+
+void DisableRendererVSync(SDL_Renderer* pRenderer, const char* pszRendererName)
+{
+	if ((pRenderer != NULL) && !SDL_SetRenderVSync(pRenderer, 0)) {
+		fprintf(stderr,
+			"[warn] SDL_SetRenderVSync(%s) failed: %s\n",
+			(pszRendererName != NULL)? pszRendererName: "renderer",
+			SDL_GetError());
+	}
+}
+
+int GetFrameExecuteClock()
+{
+	const int nBaseClockMHz = CPC88::GetBaseClock();
+	return ((nBaseClockMHz > 0)? nBaseClockMHz: 4) * 1000000 / 60;
+}
 
 ////////////////////////////////////////////////////////////
 // Environment settings (BASIC mode, base clock, dip-switches)
@@ -1539,6 +1557,7 @@ bool OpenPrinterWindow(SPrinterPreview& pp, ImGuiContext* pMainCtx)
 		pp.pWindow = NULL;
 		return false;
 	}
+	DisableRendererVSync(pp.pRenderer, "printer preview");
 	pp.nWindowID = SDL_GetWindowID(pp.pWindow);
 
 #ifdef X88000_SDL3_HAS_IMGUI
@@ -2452,6 +2471,7 @@ bool OpenDebugWindow(SDebugWindow& dw, ImGuiContext* pMainCtx,
 		dw.pWindow = NULL;
 		return false;
 	}
+	DisableRendererVSync(dw.pRenderer, "debug window");
 
 	dw.nWindowID = SDL_GetWindowID(dw.pWindow);
 
@@ -3350,6 +3370,8 @@ int main(int argc, char** argv) {
 
 	CSdl3Settings settings;
 	settings.Load();
+	envView.nBoostLimiter =
+		atoi(settings.GetSectionString(SECTION_OPTION, "boostlim", "0").c_str());
 
 #ifdef X88000_SDL3_HAS_CORE
 	bCoreReady = InitializeCore();
@@ -3414,6 +3436,7 @@ int main(int argc, char** argv) {
 		SDL_Quit();
 		return 1;
 	}
+	DisableRendererVSync(pRenderer, "main window");
 
 	SDL_Texture* pFrameTexture = SDL_CreateTexture(
 		pRenderer,
@@ -3718,13 +3741,14 @@ int main(int argc, char** argv) {
 			} else {
 				// Normal keyboard: only when main window has focus
 				SDL_WindowFlags nMainFlags = SDL_GetWindowFlags(pWindow);
+				const int nFrameExecClock = GetFrameExecuteClock();
 				if (nMainFlags & SDL_WINDOW_INPUT_FOCUS) {
 					UpdateKeyMatricsFromSDL();
 				}
 				if (!CPC88::IsDebugMode()) {
-					CPC88::Execute(4000000/60);
+					CPC88::Execute(nFrameExecClock);
 				} else if (!CPC88::IsDebugStopped()) {
-					CPC88::DebugExecute(4000000/60);
+					CPC88::DebugExecute(nFrameExecClock);
 				}
 			}
 			UpdateCoreFrame();
