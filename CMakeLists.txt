@@ -23,7 +23,7 @@ set(X88000_IMGUI_DIR "${X88000_THIRD_PARTY_DIR}/imgui")
 
 option(X88000M_FETCH_SDL3 "Fetch SDL3 from upstream instead of using pkg-config" ${X88000M_DEFAULT_FETCH_SDL3})
 option(X88000M_FETCH_IMGUI "Fetch Dear ImGui from upstream when third_party/imgui is unavailable" ON)
-set(X88000M_SDL3_GIT_TAG "release-3.4.2" CACHE STRING "SDL3 git tag used by FetchContent")
+set(X88000M_SDL3_GIT_TAG "release-3.4.4" CACHE STRING "SDL3 git tag used by FetchContent")
 set(X88000M_IMGUI_GIT_TAG "docking" CACHE STRING "Dear ImGui git tag used by FetchContent (docking branch)")
 
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
@@ -153,7 +153,7 @@ target_link_libraries(X88000M PRIVATE ${X88000M_SDL3_LINK_TARGET} x88core)
 target_compile_definitions(X88000M PRIVATE
 	X88000_SDL3_HAS_CORE=1
 	X88000_SDL3_HAS_IMGUI=1
-	X88000M_VERSION="1.0.0"
+	X88000M_VERSION="1.0.1"
 	SDL_MAIN_HANDLED=1)
 target_include_directories(X88000M PRIVATE
 	"${X88000_SRC_DIR}"
@@ -191,11 +191,11 @@ if(APPLE)
 		MACOSX_BUNDLE_INFO_PLIST
 			"${X88000_CMAKE_DIR}/Info.plist.in"
 		MACOSX_BUNDLE_BUNDLE_NAME "X88000M"
-		MACOSX_BUNDLE_BUNDLE_VERSION "1"
+		MACOSX_BUNDLE_BUNDLE_VERSION "2"
 		MACOSX_BUNDLE_COPYRIGHT "Original X88000 by Manuke; repository maintenance by bubio"
 		MACOSX_BUNDLE_GUI_IDENTIFIER "com.github.bubio.x88000m"
-		MACOSX_BUNDLE_LONG_VERSION_STRING "X88000M 1.0.0(1)"
-		MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0"
+		MACOSX_BUNDLE_LONG_VERSION_STRING "X88000M 1.0.1(2)"
+		MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.1"
 		MACOSX_BUNDLE_ICON_FILE "AppIcon")
 elseif(WIN32)
 	# Copy font alongside the executable so it can be found at runtime.
