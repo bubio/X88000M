@@ -59,7 +59,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: X88000M-${{ matrix.artifact_suffix }}
-          path: build/X88000M-${{ matrix.artifact_suffix }}.zip
+          path: package/
           if-no-files-found: error
 
       - name: Upload release asset
