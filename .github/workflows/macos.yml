@@ -41,7 +41,7 @@ jobs:
           lipo -info build/X88000M.app/Contents/MacOS/X88000M
           otool -l build/X88000M.app/Contents/MacOS/X88000M | grep -A3 LC_BUILD_VERSION
 
-      - name: Package app
+      - name: Package for release
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
             build/X88000M.app \
@@ -51,7 +51,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: X88000M-macos-universal
-          path: build/X88000M-macos-universal.zip
+          path: build/X88000M.app
           if-no-files-found: error
 
       - name: Upload release asset
