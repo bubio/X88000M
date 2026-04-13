@@ -4,7 +4,7 @@
   <img src="docs/AppIcon.png" alt="X88000M" width="128" height="128">
 </p>
 
-X88000M は、Manuke 氏による PC-8801 エミュレータ `X88000` をベースにした macOS 向け移植版です。
+X88000M は、Manuke 氏による PC-8801 エミュレータ `X88000` をベースにした macOS / Windows 向け移植版です。
 
 <p align="center">
   <a href="https://github.com/bubio/X88000M/releases/latest">
@@ -27,7 +27,7 @@ X88000のLinux版からGTK 2.0依存を排除し、SDL3 + Dear ImGuiで構築し
 </p>
 
 - **SDL3 + Dear ImGui ベースの単一 frontend**
-  macOS で扱いやすい構成に整理しており、アプリ本体は `X88000M.app` に統一しています。
+  macOS / Windows で同じ操作感で利用できます。
 - **メディア操作が速い**
   `D88`、`T88`、`CMT` をメニュー、ドラッグ&ドロップ、起動引数から読み込めます。
 - **D88 の複数イメージ管理に対応**
@@ -59,14 +59,24 @@ X88000のLinux版からGTK 2.0依存を排除し、SDL3 + Dear ImGuiで構築し
 
 ## System Requirements
 
+### macOS
+
 - macOS 13.5 (Ventura) 以降
 - Apple Silicon または Intel Mac
 
+### Windows
+
+- Windows 10 以降
+- x64 または ARM64
+
 ## 使い始める前に
 
-`X88000M` には ROM イメージは含まれていません。macOS では、ROM 一式を次の場所に置くのが一番簡単です。
+`X88000M` には ROM イメージは含まれていません。ROM 一式を次の場所に置いてください。
 
-- `~/Library/Application Support/X88000M/`
+| OS | ROM 配置先 |
+|---|---|
+| macOS | `~/Library/Application Support/X88000M/` |
+| Windows | `%APPDATA%\X88000M\` |
 
 端末から起動する場合はカレントディレクトリからも探します。必要に応じて `X88_ROM_DIR` 環境変数でも ROM ディレクトリを指定できます。
 
@@ -102,31 +112,43 @@ X88000のLinux版からGTK 2.0依存を排除し、SDL3 + Dear ImGuiで構築し
 - `Ctrl+1` / `Ctrl+2`: Drive 1 / 2 をイジェクト
 - `Ctrl+Enter`: フルスクリーン切り替え
 
-ドラッグ&ドロップ時は `Shift+drop` で Drive 2、`Cmd+Ctrl+drop` で Drive 1 に優先投入できます。
+ドラッグ&ドロップ時は `Shift+drop` で Drive 2、macOS では `Cmd+Ctrl+drop` で Drive 1 に優先投入できます。
 
-## macOS でソースからビルドする場合
+## ソースからビルドする
 
-`cmake` が必要です。ローカルの `SDL3` を使う場合は `pkg-config` も必要です。Dear ImGui は `third_party/imgui/` を優先し、無い場合はデフォルトで自動取得します (`X88000M_FETCH_IMGUI=ON`)。
+### 必要なもの
+
+- CMake 3.16 以上
+- C++11 対応コンパイラ
+  - macOS: Xcode (Apple Clang)
+  - Windows: Visual Studio 2022 (MSVC)
+
+SDL3 と Dear ImGui はデフォルトで自動取得されます (`X88000M_FETCH_SDL3=ON`, `X88000M_FETCH_IMGUI=ON`)。
+
+### macOS
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target X88000M -j
 ```
 
-`SDL3` をローカルに入れていない場合は、次のように自動取得できます。
+`build/X88000M.app` が生成されます。
 
-```sh
-cmake -S . -B build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DX88000M_FETCH_SDL3=ON
-cmake --build build --target X88000M -j
+### Windows
+
+Developer Command Prompt for VS 2022 から:
+
+```cmd
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target X88000M --parallel
 ```
 
-`X88000M_FETCH_IMGUI=ON` は現在のデフォルト値なので、通常は明示しなくて構いません。
+`build\X88000M.exe` と `build\fonts\` が生成されます。Ninja がない場合は Visual Studio ジェネレータも使えます:
 
-macOS では `build/X88000M.app` が生成されます。端末から直接起動する場合は `build/X88000M.app/Contents/MacOS/X88000M` を実行してください。
-
-Linux を含め、frontend は SDL3 + Dear ImGui のみを前提にしています。
+```cmd
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release --target X88000M --parallel
+```
 
 ## 現在の注意点
 
@@ -138,9 +160,25 @@ Linux を含め、frontend は SDL3 + Dear ImGui のみを前提にしていま�
 ## クレジット
 
 - Original X88000 by Manuke
-- macOS / SDL3+ImGui port maintained by bubio
+- macOS / Windows / SDL3+ImGui port maintained by bubio
 - オリジナル配布物の説明文書は [src/X88000Src.txt](./src/X88000Src.txt) に収録しています。
 
 ## ライセンス
 
 オリジナル配布物では、X88000 ソースは `PDS` (`Public Domain Software`) と表記されています。標準的な SPDX ライセンス識別子にそのまま対応するものではないため、このリポジトリでは upstream の文言を [LICENSE](./LICENSE) にそのまま収録しています。
+
+### サードパーティ
+
+本プロジェクトは以下のサードパーティソフトウェアを利用しています。ビルド時に自動取得され、静的リンクされます。
+
+| ライブラリ | ライセンス | 用途 |
+|---|---|---|
+| [SDL3](https://github.com/libsdl-org/SDL) | zlib License | ウィンドウ、入力、オーディオ、レンダリング |
+| [Dear ImGui](https://github.com/ocornut/imgui) | MIT License | GUI (メニュー、設定、デバッガ) |
+| [Noto Sans JP](https://fonts.google.com/noto/specimen/Noto+Sans+JP) | SIL Open Font License 1.1 | 日本語フォント |
+
+各ライセンスの詳細は以下を参照してください:
+
+- SDL3: https://github.com/libsdl-org/SDL/blob/main/LICENSE.txt
+- Dear ImGui: https://github.com/ocornut/imgui/blob/master/LICENSE.txt
+- Noto Sans JP: [fonts/LICENSE-NotoSansJP.txt](./fonts/LICENSE-NotoSansJP.txt)
