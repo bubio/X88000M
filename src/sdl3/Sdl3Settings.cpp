@@ -7,7 +7,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+#ifdef X88_PLATFORM_WINDOWS
+#include <direct.h>
 #include <sys/stat.h>
+#ifndef S_ISDIR
+#define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
+#endif
+#else
+#include <sys/stat.h>
+#endif
 
 const char CSdl3Settings::SECTION_SDL3[] = "sdl3";
 
@@ -33,12 +42,21 @@ void CSdl3Settings::ResolveFilePath() const
 	if (strDir.empty()) {
 		return;
 	}
+#ifdef X88_PLATFORM_WINDOWS
+	m_strFilePath = strDir + "\\X88000.ini";
+#else
 	m_strFilePath = strDir + "/X88000.ini";
+#endif
 }
 
 std::string CSdl3Settings::ResolveSettingsDirectory()
 {
-#ifdef __APPLE__
+#ifdef X88_PLATFORM_WINDOWS
+	const char* pszAppData = getenv("APPDATA");
+	if ((pszAppData != NULL) && (*pszAppData != '\0')) {
+		return std::string(pszAppData) + "\\X88000M";
+	}
+#elif defined(__APPLE__)
 	const char* pszHome = getenv("HOME");
 	if ((pszHome != NULL) && (*pszHome != '\0')) {
 		return std::string(pszHome) + "/Library/Application Support/X88000M";
@@ -64,7 +82,15 @@ bool CSdl3Settings::EnsureDirectoryExists(const std::string& strDir)
 	// Create the path component-by-component so a missing intermediate
 	// directory (e.g. ".../Application Support") is also created.
 	for (size_t n = 1; n <= strDir.size(); n++) {
-		if ((n == strDir.size()) || (strDir[n] == '/')) {
+		bool bSep = (strDir[n] == '/');
+#ifdef X88_PLATFORM_WINDOWS
+		bSep = bSep || (strDir[n] == '\\');
+		// Skip drive letter colon (e.g. "C:\")
+		if ((n == 2) && (strDir[1] == ':')) {
+			continue;
+		}
+#endif
+		if ((n == strDir.size()) || bSep) {
 			std::string strSub = strDir.substr(0, n);
 			if (strSub.empty()) {
 				continue;
@@ -75,7 +101,11 @@ bool CSdl3Settings::EnsureDirectoryExists(const std::string& strDir)
 					return false;
 				}
 			} else {
+#ifdef X88_PLATFORM_WINDOWS
+				if (_mkdir(strSub.c_str()) != 0) {
+#else
 				if (mkdir(strSub.c_str(), 0755) != 0) {
+#endif
 					if (stat(strSub.c_str(), &st) != 0) {
 						return false;
 					}

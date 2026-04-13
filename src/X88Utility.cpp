@@ -840,3 +840,40 @@ std::string NX88Utility::GetFileExt(const std::string& fstrFileName) {
 
 	return fstrExt;
 }
+
+////////////////////////////////////////////////////////////
+// file I/O (UTF-8 path safe)
+
+#ifdef X88_PLATFORM_WINDOWS
+
+std::wstring NX88Utility::UTF8toWide(const std::string& strUTF8) {
+	if (strUTF8.empty()) {
+		return std::wstring();
+	}
+	int nWide = MultiByteToWideChar(
+		CP_UTF8, 0, strUTF8.c_str(), (int)strUTF8.size(), NULL, 0);
+	if (nWide <= 0) {
+		return std::wstring();
+	}
+	std::wstring wstr(nWide, L'\0');
+	MultiByteToWideChar(
+		CP_UTF8, 0, strUTF8.c_str(), (int)strUTF8.size(), &wstr[0], nWide);
+	return wstr;
+}
+
+FILE* NX88Utility::Fopen_UTF8(const char* pszPath, const char* pszMode) {
+	std::wstring wstrPath = UTF8toWide(pszPath);
+	std::wstring wstrMode = UTF8toWide(pszMode);
+	if (wstrPath.empty() || wstrMode.empty()) {
+		return NULL;
+	}
+	return _wfopen(wstrPath.c_str(), wstrMode.c_str());
+}
+
+#else
+
+FILE* NX88Utility::Fopen_UTF8(const char* pszPath, const char* pszMode) {
+	return fopen(pszPath, pszMode);
+}
+
+#endif // X88_PLATFORM_WINDOWS

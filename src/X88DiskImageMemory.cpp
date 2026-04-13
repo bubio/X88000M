@@ -11,6 +11,7 @@
 #include "X88DiskImageMemory.h"
 
 #include "DiskImageFile.h"
+#include "X88Utility.h"
 
 ////////////////////////////////////////////////////////////
 // implementation of CX88DiskImageMemory
@@ -152,8 +153,9 @@ int CX88DiskImageMemory::Create(
 	m_hFileMap = NULL;
 	int nResult = CDiskImageFile::ERR_NOERROR;
 	try {
-		m_hFile = CreateFile(
-			fstrFileName.c_str(),
+		std::wstring wstrFileName = NX88Utility::UTF8toWide(fstrFileName);
+		m_hFile = CreateFileW(
+			wstrFileName.c_str(),
 			m_bReadOnly? GENERIC_READ: (GENERIC_READ | GENERIC_WRITE),
 			m_bReadOnly? FILE_SHARE_READ: 0,
 			NULL,
@@ -166,8 +168,8 @@ int CX88DiskImageMemory::Create(
 				throw int(CDiskImageFile::ERR_CANNOTOPEN);
 			}
 			m_bReadOnly = true;
-			m_hFile = CreateFile(
-				fstrFileName.c_str(),
+			m_hFile = CreateFileW(
+				wstrFileName.c_str(),
 				GENERIC_READ,
 				FILE_SHARE_READ,
 				NULL,
@@ -205,7 +207,7 @@ int CX88DiskImageMemory::Create(
 			if ((m_pbtData = (uint8_t*)malloc(m_dwSize)) == NULL) {
 				throw int(CDiskImageFile::ERR_FEWMEMORY);
 			}
-			uint32_t dwReadSize;
+			DWORD dwReadSize;
 			if (!ReadFile(
 					m_hFile, m_pbtData, m_dwSize, &dwReadSize, NULL))
 			{
@@ -339,7 +341,7 @@ int CX88DiskImageMemory::Flush() const {
 	if (m_pbtData != NULL) {
 		if (m_hFileMap != NULL) {
 		} else if (!m_bReadOnly && (m_hFile != NULL)) {
-			uint32_t dwWriteSize;
+			DWORD dwWriteSize;
 			if (!WriteFile(
 					m_hFile, m_pbtData, m_dwSize, &dwWriteSize, NULL))
 			{

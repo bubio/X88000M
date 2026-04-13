@@ -5,6 +5,7 @@ Debug.log
 .DS_Store
 build/
 build-*/
+build_*/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake

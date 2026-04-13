@@ -4,6 +4,8 @@ if(APPLE)
 	set(CMAKE_OSX_DEPLOYMENT_TARGET "13.5" CACHE STRING "Minimum macOS deployment target" FORCE)
 	set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Build universal binary" FORCE)
 	set(X88000M_DEFAULT_FETCH_SDL3 ON)
+elseif(WIN32)
+	set(X88000M_DEFAULT_FETCH_SDL3 ON)
 else()
 	set(X88000M_DEFAULT_FETCH_SDL3 OFF)
 endif()
@@ -138,6 +140,11 @@ endif()
 
 if(APPLE)
 	add_executable(X88000M MACOSX_BUNDLE ${X88000_FRONTEND_SOURCES})
+elseif(WIN32)
+	set(X88000_WIN_RC "${CMAKE_SOURCE_DIR}/resources/X88000M.rc")
+	add_executable(X88000M WIN32 ${X88000_FRONTEND_SOURCES} ${X88000_WIN_RC})
+	# Use main() as the entry point instead of WinMain.
+	target_link_options(X88000M PRIVATE "/ENTRY:mainCRTStartup")
 else()
 	add_executable(X88000M ${X88000_FRONTEND_SOURCES})
 endif()
@@ -146,7 +153,8 @@ target_link_libraries(X88000M PRIVATE ${X88000M_SDL3_LINK_TARGET} x88core)
 target_compile_definitions(X88000M PRIVATE
 	X88000_SDL3_HAS_CORE=1
 	X88000_SDL3_HAS_IMGUI=1
-	X88000M_VERSION="1.0.0")
+	X88000M_VERSION="1.0.0"
+	SDL_MAIN_HANDLED=1)
 target_include_directories(X88000M PRIVATE
 	"${X88000_SRC_DIR}"
 	"${X88000M_IMGUI_SOURCE_DIR}"
@@ -189,4 +197,12 @@ if(APPLE)
 		MACOSX_BUNDLE_LONG_VERSION_STRING "X88000M 1.0.0(1)"
 		MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0"
 		MACOSX_BUNDLE_ICON_FILE "AppIcon")
+elseif(WIN32)
+	# Copy font alongside the executable so it can be found at runtime.
+	add_custom_command(TARGET X88000M POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E make_directory
+			"$<TARGET_FILE_DIR:X88000M>/fonts"
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different
+			${X88000_FONT_RESOURCES}
+			"$<TARGET_FILE_DIR:X88000M>/fonts/")
 endif()

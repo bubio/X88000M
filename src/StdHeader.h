@@ -45,13 +45,25 @@
 
 #endif // compiler check
 
-#ifdef _WINDOWS // Windows Platform
+#if defined(_WINDOWS) && !defined(X88_GUI_SDL3) // Legacy Windows GUI
 
 #define X88_PLATFORM_WINDOWS
 #define X88_GUI_WINDOWS
 #define X88_ENCODE_WINDOWS
 #define X88_ENCODING_SOURCE_SJIS
 #define X88_ENCODING_GUI_SJIS
+
+#elif defined(_WIN32) // Windows with SDL3
+
+#define X88_PLATFORM_WINDOWS
+#define X88_ENCODE_WINDOWS
+
+#ifndef X88_GUI_SDL3
+#define X88_GUI_SDL3
+#endif // X88_GUI_SDL3
+
+#define X88_ENCODING_SOURCE_UTF8
+#define X88_ENCODING_GUI_UTF8
 
 #else // UNIX Platform
 
@@ -75,23 +87,29 @@
 #ifdef X88_PLATFORM_WINDOWS
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdarg.h>
 #include <memory.h>
 #include <ctype.h>
+#include <string.h>
+#include <limits.h>
 #include <direct.h>
 #include <io.h>
+#include <fcntl.h>
+#include <time.h>
 #include <math.h>
+#include <locale.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
-#define strcasecmp	stricmp
-#define snprintf	_snprintf
-#define vsnprintf	_vsnprintf
+#define strcasecmp	_stricmp
+#define strncasecmp	_strnicmp
 #define unlink		_unlink
 
-typedef signed char int8_t;
-typedef unsigned char uint8_t;
-typedef signed short int16_t;
-typedef unsigned short uint16_t;
-typedef signed long int32_t;
-typedef unsigned long uint32_t;
+#ifndef _MAX_PATH
+#define _MAX_PATH	260
+#endif
 
 #elif defined(X88_PLATFORM_UNIX)
 
@@ -142,10 +160,19 @@ typedef HWND CX88WndHandle;
 
 #elif defined(X88_GUI_SDL3)
 
-#if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
+#if defined(_WIN32) || (defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__))
 #define X88_BYTEORDER_LITTLE_ENDIAN
 #else
 #define X88_BYTEORDER_BIG_ENDIAN
+#endif
+
+#ifdef X88_PLATFORM_WINDOWS
+// Windows API is needed by core code (memory-mapped files, timers, etc.)
+// even when using the SDL3 GUI layer.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #endif
 
 #endif // X88_GUI

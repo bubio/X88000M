@@ -12,6 +12,7 @@
 #include "StdHeader.h"
 
 #include "PC88.h"
+#include "X88Utility.h"
 
 ////////////////////////////////////////////////////////////
 // implementation of CPC88
@@ -448,7 +449,7 @@ void CPC88::Reset() {
 
 void CPC88::LoadMemoryImage(const std::string& fstrFileName) {
 	FILE* fpt;
-	if ((fpt = fopen(fstrFileName.c_str(), "rb")) != NULL) {
+	if ((fpt = NX88Utility::Fopen_UTF8(fstrFileName.c_str(), "rb")) != NULL) {
 		uint8_t abtBuffer[0x7F40];
 		FileRead(abtBuffer, sizeof(abtBuffer), fpt);
 		fclose(fpt);

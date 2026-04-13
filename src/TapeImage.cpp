@@ -9,6 +9,7 @@
 #include "StdHeader.h"
 
 #include "TapeImage.h"
+#include "X88Utility.h"
 
 ////////////////////////////////////////////////////////////
 // implementation of CTapeImage
@@ -107,7 +108,7 @@ int CTapeImage::Load(const std::string& fstrFileName) {
 	uint8_t abtBuffer[256];
 	uint32_t dwLastTick = 0, dwOfsTick = 0;
 	try {
-		if ((fpt = fopen(fstrFileName.c_str(), "rb")) == NULL) {
+		if ((fpt = NX88Utility::Fopen_UTF8(fstrFileName.c_str(), "rb")) == NULL) {
 			throw int(ERR_CANNOTOPEN);
 		}
 		if (fread(abtBuffer, FILEID_LENGTH, 1, fpt) < 1) {
@@ -211,7 +212,7 @@ int CTapeImage::Save(const std::string& fstrFileName) {
 	FILE* fpt = NULL;
 	uint8_t abtBuffer[256];
 	try {
-		if ((fpt = fopen(fstrFileName.c_str(), "wb")) == NULL) {
+		if ((fpt = NX88Utility::Fopen_UTF8(fstrFileName.c_str(), "wb")) == NULL) {
 			throw int(ERR_CANNOTOPEN);
 		}
 		if (fwrite(m_szFileID, FILEID_LENGTH, 1, fpt) < 1) {
@@ -276,7 +277,7 @@ int CTapeImage::LoadCMT(const std::string& fstrFileName) {
 	Erase();
 	FILE* fpt = NULL;
 	try {
-		if ((fpt = fopen(fstrFileName.c_str(), "rb")) == NULL) {
+		if ((fpt = NX88Utility::Fopen_UTF8(fstrFileName.c_str(), "rb")) == NULL) {
 			throw int(ERR_CANNOTOPEN);
 		}
 		if (fseek(fpt, 0, SEEK_END) != 0) {
@@ -530,7 +531,7 @@ int CTapeImage::SaveCMT(const std::string& fstrFileName) {
 	int nResult = ERR_NOERROR;
 	FILE* fpt = NULL;
 	try {
-		if ((fpt = fopen(fstrFileName.c_str(), "wb")) == NULL) {
+		if ((fpt = NX88Utility::Fopen_UTF8(fstrFileName.c_str(), "wb")) == NULL) {
 			throw int(ERR_CANNOTOPEN);
 		}
 		if (!WriteData(0, (int)m_vectData.size(), fpt)) {

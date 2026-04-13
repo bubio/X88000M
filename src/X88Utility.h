@@ -80,6 +80,14 @@ namespace NX88Utility {
 // filename
 	// get file ext(filesystem encoding)
 	std::string GetFileExt(const std::string& fstrFileName);
+
+// file I/O (UTF-8 path safe)
+	// fopen with UTF-8 path (uses _wfopen on Windows)
+	FILE* Fopen_UTF8(const char* pszPath, const char* pszMode);
+#ifdef X88_PLATFORM_WINDOWS
+	// Convert UTF-8 string to wide string (UTF-16)
+	std::wstring UTF8toWide(const std::string& strUTF8);
+#endif
 };
 
 #endif // X88Utility_DEFINED

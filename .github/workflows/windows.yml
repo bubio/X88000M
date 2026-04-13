@@ -1,0 +1,69 @@
+name: Windows Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            msvc_arch: amd64
+            artifact_suffix: win-x64
+          - arch: arm64
+            msvc_arch: amd64_arm64
+            artifact_suffix: win-arm64
+
+    runs-on: windows-2025
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DX88000M_FETCH_SDL3=ON
+
+      - name: Build
+        run: cmake --build build --target X88000M --parallel
+
+      - name: Package
+        run: |
+          mkdir package
+          copy build\X88000M.exe package\
+          xcopy /E /I build\fonts package\fonts
+          powershell Compress-Archive -Path package\* -DestinationPath build\X88000M-${{ matrix.artifact_suffix }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: X88000M-${{ matrix.artifact_suffix }}
+          path: build/X88000M-${{ matrix.artifact_suffix }}.zip
+          if-no-files-found: error
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: build/X88000M-${{ matrix.artifact_suffix }}.zip

@@ -4,6 +4,7 @@
 
 #include "StdHeader.h"
 #include "PC88.h"
+#include "X88Utility.h"
 #include "X88ScreenDrawer.h"
 #include "X88DiskImageMemory.h"
 #include "ParallelNull.h"
@@ -41,6 +42,25 @@
 #ifdef X88000_SDL3_HAS_CORE
 
 namespace {
+
+// Resolve the path to NotoSansJP-Regular.ttf.
+// macOS: <BasePath>/../Resources/fonts/
+// Windows/Linux: <BasePath>/fonts/
+std::string ResolveFontPath()
+{
+	const char* pBase = SDL_GetBasePath();
+	if (!pBase) return std::string();
+
+	std::string sBase(pBase);
+#ifdef __APPLE__
+	std::string sPath = sBase + "../Resources/fonts/NotoSansJP-Regular.ttf";
+#else
+	std::string sPath = sBase + "fonts/NotoSansJP-Regular.ttf";
+#endif
+	FILE* fpt = fopen(sPath.c_str(), "rb");
+	if (fpt) { fclose(fpt); return sPath; }
+	return std::string();
+}
 
 std::vector<std::string> g_vRomSearchDir;
 CPC88 g_pc88;
@@ -1295,10 +1315,17 @@ SRamExportRequest g_ramExportRequest = {};
 
 std::string GetDefaultFolderDialogDir()
 {
+#ifdef X88_PLATFORM_WINDOWS
+	const char* pProfile = getenv("USERPROFILE");
+	if (pProfile && *pProfile) {
+		return std::string(pProfile) + "\\Documents\\";
+	}
+#else
 	const char* pHome = getenv("HOME");
 	if (pHome && *pHome) {
 		return std::string(pHome) + "/Documents/";
 	}
+#endif
 	return "./";
 }
 
@@ -1312,7 +1339,12 @@ void SDLCALL OnExportFolderSelected(void* userdata, const char* const* filelist,
 	g_strPendingExportDir.clear();
 	if (filelist && filelist[0]) {
 		std::string strDir = filelist[0];
-		if (!strDir.empty() && strDir[strDir.size() - 1] != '/') {
+		char cLast = strDir[strDir.size() - 1];
+		if (!strDir.empty() && cLast != '/'
+#ifdef X88_PLATFORM_WINDOWS
+			&& cLast != '\\'
+#endif
+		) {
 			strDir += '/';
 		}
 		g_strPendingExportDir = strDir;
@@ -1331,12 +1363,16 @@ std::string ExportSelectedRam(const std::string& strExportDir,
 			"X88000M_RAM_%Y%m%d_%H%M%S", pTm);
 	}
 	std::string fstrDir = strExportDir + szTime + "/";
+#ifdef X88_PLATFORM_WINDOWS
+	_mkdir(fstrDir.c_str());
+#else
 	mkdir(fstrDir.c_str(), 0755);
+#endif
 
 	int nExported = 0;
 	auto WriteFile = [&](const char* pszName, const void* pData, size_t nSize) -> bool {
 		std::string fstrPath = fstrDir + pszName;
-		FILE* fpt = fopen(fstrPath.c_str(), "wb");
+		FILE* fpt = NX88Utility::Fopen_UTF8(fstrPath.c_str(), "wb");
 		if (fpt == NULL) {
 			return false;
 		}
@@ -1352,7 +1388,7 @@ std::string ExportSelectedRam(const std::string& strExportDir,
 	}
 	if (req.bMainRam1) {
 		std::string fstrPath = fstrDir + "main1.ram";
-		FILE* fpt = fopen(fstrPath.c_str(), "wb");
+		FILE* fpt = NX88Utility::Fopen_UTF8(fstrPath.c_str(), "wb");
 		if (fpt != NULL) {
 			bool bOK = false;
 			if (req.bFastTVRamUse) {
@@ -1569,19 +1605,14 @@ bool OpenPrinterWindow(SPrinterPreview& pp, ImGuiContext* pMainCtx)
 
 	// Load font
 	{
-		const char* pBase = SDL_GetBasePath();
-		if (pBase) {
-			std::string sFontPath = std::string(pBase)
-				+ "../Resources/fonts/NotoSansJP-Regular.ttf";
+		std::string sFontPath = ResolveFontPath();
+		if (!sFontPath.empty()) {
 			ImFontConfig fontCfg;
 			fontCfg.OversampleH = 2;
 			fontCfg.OversampleV = 1;
-			ImFont* pFont = prtIO.Fonts->AddFontFromFileTTF(
+			prtIO.Fonts->AddFontFromFileTTF(
 				sFontPath.c_str(), 20.0f, &fontCfg,
 				prtIO.Fonts->GetGlyphRangesJapanese());
-			if (!pFont) {
-				prtIO.Fonts->AddFontDefault();
-			}
 		} else {
 			prtIO.Fonts->AddFontDefault();
 		}
@@ -2249,14 +2280,14 @@ FILE* OpenSystemFileFromDirs(const std::string& strName)
 	for (size_t nDir = 0; nDir < g_vRomSearchDir.size(); nDir++) {
 		const std::string& fstrDir = g_vRomSearchDir[nDir];
 		std::string fstrPath = fstrDir + strName;
-		FILE* fpt = fopen(fstrPath.c_str(), "rb");
+		FILE* fpt = NX88Utility::Fopen_UTF8(fstrPath.c_str(), "rb");
 		if (fpt != NULL) {
 			return fpt;
 		}
 #ifdef X88_PLATFORM_UNIX
 		if (fstrUpperName != strName) {
 			fstrPath = fstrDir + fstrUpperName;
-			fpt = fopen(fstrPath.c_str(), "rb");
+			fpt = NX88Utility::Fopen_UTF8(fstrPath.c_str(), "rb");
 			if (fpt != NULL) {
 				return fpt;
 			}
@@ -2307,7 +2338,7 @@ bool StartDebugLog(const std::string& fstrDir)
 		? GetDefaultFolderDialogDir()
 		: EnsureTrailingSlash(fstrDir);
 	fstrPath = fstrDir2 + szTime;
-	g_pfDebugLog = fopen(fstrPath.c_str(), "at");
+	g_pfDebugLog = NX88Utility::Fopen_UTF8(fstrPath.c_str(), "at");
 	if (g_pfDebugLog != NULL) {
 		g_nDebugLogCol = 0;
 	}
@@ -2489,19 +2520,14 @@ bool OpenDebugWindow(SDebugWindow& dw, ImGuiContext* pMainCtx,
 
 	// Load the same font for the debug context.
 	{
-		const char* pBase = SDL_GetBasePath();
-		if (pBase) {
-			std::string sFontPath = std::string(pBase)
-				+ "../Resources/fonts/NotoSansJP-Regular.ttf";
+		std::string sFontPath = ResolveFontPath();
+		if (!sFontPath.empty()) {
 			ImFontConfig fontCfg;
 			fontCfg.OversampleH = 2;
 			fontCfg.OversampleV = 1;
-			ImFont* pFont = dbgIO.Fonts->AddFontFromFileTTF(
+			dbgIO.Fonts->AddFontFromFileTTF(
 				sFontPath.c_str(), 20.0f, &fontCfg,
 				dbgIO.Fonts->GetGlyphRangesJapanese());
-			if (!pFont) {
-				dbgIO.Fonts->AddFontDefault();
-			}
 		} else {
 			dbgIO.Fonts->AddFontDefault();
 		}
@@ -2522,7 +2548,7 @@ bool OpenDebugWindow(SDebugWindow& dw, ImGuiContext* pMainCtx,
 	dw.bShowExportRam = true;
 	// Only build initial layout if no saved INI exists.
 	{
-		FILE* fTest = fopen(dw.strIniPath.c_str(), "r");
+		FILE* fTest = NX88Utility::Fopen_UTF8(dw.strIniPath.c_str(), "r");
 		if (fTest) {
 			fclose(fTest);
 			dw.bNeedInitLayout = false;
@@ -3012,7 +3038,12 @@ bool InitializeCore()
 	}
 	RegisterRomSearchDir(".");
 
-#ifdef __APPLE__
+#ifdef X88_PLATFORM_WINDOWS
+	const char* pszAppData = getenv("APPDATA");
+	if ((pszAppData != NULL) && (*pszAppData != '\0')) {
+		RegisterRomSearchDir(std::string(pszAppData) + "\\X88000M");
+	}
+#elif defined(__APPLE__)
 	const char* pszHome = getenv("HOME");
 	if ((pszHome != NULL) && (*pszHome != '\0')) {
 		RegisterRomSearchDir(
@@ -3460,28 +3491,21 @@ int main(int argc, char** argv) {
 	ImGui::StyleColorsDark();
 	ApplyTintStyle();
 
-	// Load Noto Sans JP from the app bundle's Resources/fonts/ so that
-	// Japanese text renders correctly in ImGui menus and dialogs. Falls
-	// back to the built-in ASCII font if the file is missing.
+	// Load Noto Sans JP so that Japanese text renders correctly.
+	// Falls back to the built-in ASCII font if the file is missing.
 	{
-		const char* pBase = SDL_GetBasePath();  // .../Contents/MacOS/
-		if (pBase) {
-			std::string sFontPath = std::string(pBase)
-				+ "../Resources/fonts/NotoSansJP-Regular.ttf";
+		std::string sFontPath = ResolveFontPath();
+		if (!sFontPath.empty()) {
 			ImFontConfig fontCfg;
 			fontCfg.OversampleH = 2;
 			fontCfg.OversampleV = 1;
-			ImFont* pFont = io.Fonts->AddFontFromFileTTF(
+			io.Fonts->AddFontFromFileTTF(
 				sFontPath.c_str(), 20.0f, &fontCfg,
 				io.Fonts->GetGlyphRangesJapanese());
-			if (!pFont) {
-				fprintf(stderr,
-					"[warn] failed to load %s — falling back to "
-					"built-in font (no Japanese glyphs)\n",
-					sFontPath.c_str());
-				io.Fonts->AddFontDefault();
-			}
 		} else {
+			fprintf(stderr,
+				"[warn] font not found — falling back to "
+				"built-in font (no Japanese glyphs)\n");
 			io.Fonts->AddFontDefault();
 		}
 	}
@@ -3925,6 +3949,14 @@ int main(int argc, char** argv) {
 							if (dbgWin.strIniPath.empty()) {
 								const std::string& fpath = settings.GetFilePath();
 								std::string::size_type nSlash = fpath.rfind('/');
+#ifdef X88_PLATFORM_WINDOWS
+								std::string::size_type nBSlash = fpath.rfind('\\');
+								if (nBSlash != std::string::npos &&
+									(nSlash == std::string::npos || nBSlash > nSlash))
+								{
+									nSlash = nBSlash;
+								}
+#endif
 								std::string strDir = (nSlash != std::string::npos)
 									? fpath.substr(0, nSlash + 1) : "./";
 								dbgWin.strIniPath = strDir + "imgui.ini";
