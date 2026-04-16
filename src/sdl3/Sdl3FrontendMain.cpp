@@ -3563,13 +3563,6 @@ int main(int argc, char** argv) {
 				if (evt.type == SDL_EVENT_QUIT) {
 					bRunning = false;
 				}
-				// ESC only quits from main window
-				if ((evt.type == SDL_EVENT_KEY_DOWN)
-					&& (evt.key.key == SDLK_ESCAPE)
-					&& (evt.key.windowID == nMainWindowID))
-				{
-					bRunning = false;
-				}
 #ifdef X88000_SDL3_HAS_CORE
 				if (evt.type == SDL_EVENT_DROP_FILE) {
 					// In SDL3, evt.drop.data is owned by SDL and must NOT
