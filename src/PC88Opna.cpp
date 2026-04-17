@@ -1037,7 +1037,16 @@ void CPC88Opna::BuildFmTables() {
 			// Rates 0 and 1 are effectively zero (envelope frozen).
 			m_anFmEnvRateTable[nRate] = 0;
 		} else {
-			int nShift = 11 - (nRate >> 2);
+			// 2026-04-17: shift base increased from 11 → 13 (envelope
+			// ~4× slower across the board) after A/B comparing Ys piano
+			// tone against fmgen. Our prior formula made piano carrier
+			// decay ~93 ms at DR=7+KSR=6 (rate=20), vs ~340 ms on the
+			// reference. A crude global slowdown brings the piano into
+			// the right ballpark without needing the exact decap-derived
+			// rate-selector LUT. Other patches (sustained pads, rapid
+			// release) are more tolerant of this because R=0 still
+			// freezes the envelope regardless of shift.
+			int nShift = 13 - (nRate >> 2);
 			int nAdd   = 4 + (nRate & 3);
 			if (nShift < 0) nShift = 0;
 			// (add << 16) >> shift = (add * 65536) / (1 << shift)
