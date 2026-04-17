@@ -3383,6 +3383,7 @@ int main(int argc, char** argv) {
 	bool bCoreReady = false;
 	bool bPauseEmulation = false;
 	bool bShowStatusWindow = false;
+	bool bShowBeepStatsWindow = false;
 	bool bShowEnvWindow = false;
 	bool bShowDiskWindow = false;
 	bool bShowTapeWindow = false;
@@ -3959,6 +3960,11 @@ int main(int argc, char** argv) {
 					}
 					ImGui::Separator();
 
+					if (ImGui::MenuItem("BEEP Stats...", NULL, bShowBeepStatsWindow)) {
+						bShowBeepStatsWindow = !bShowBeepStatsWindow;
+					}
+					ImGui::Separator();
+
 					// Audio mute controls
 					bool bFmMute  = CPC88::Opna().GetFmMute();
 					bool bSsgMute = CPC88::Opna().GetSsgMute();
@@ -4045,6 +4051,49 @@ int main(int argc, char** argv) {
 			// Printer preview is drawn in its own window below.
 			// Debug panels are drawn in the separate debug window below.
 #endif
+			if (bShowBeepStatsWindow) {
+				if (ImGui::Begin("BEEP Stats", &bShowBeepStatsWindow)) {
+					static CSdl3AudioOutput::SBeepStats sPrev = {};
+					static uint64_t sPrevPerf = 0;
+					static double   sBit5Rate = 0.0;
+					static double   sBit7Rate = 0.0;
+					static double   sWriteRate = 0.0;
+					CSdl3AudioOutput::SBeepStats cur = g_audio.GetBeepStats();
+					uint64_t nNow = SDL_GetPerformanceCounter();
+					uint64_t nFreq = SDL_GetPerformanceFrequency();
+					if (sPrevPerf != 0 && nFreq > 0) {
+						double dElapsed = (double)(nNow - sPrevPerf)
+							/ (double)nFreq;
+						if (dElapsed >= 0.25) {
+							sBit5Rate = (double)(cur.nBit5Transitions
+								- sPrev.nBit5Transitions) / dElapsed;
+							sBit7Rate = (double)(cur.nBit7Transitions
+								- sPrev.nBit7Transitions) / dElapsed;
+							sWriteRate = (double)(cur.nWriteCount
+								- sPrev.nWriteCount) / dElapsed;
+							sPrev = cur;
+							sPrevPerf = nNow;
+						}
+					} else {
+						sPrev = cur;
+						sPrevPerf = nNow;
+					}
+					ImGui::Text("Port 40h writes: %llu total (%.1f /s)",
+						(unsigned long long)cur.nWriteCount, sWriteRate);
+					ImGui::Text("bit5 (BEEP gate): %s   transitions %llu (%.1f /s  -> %.1f Hz square)",
+						cur.bCurBit5? "HIGH": "LOW",
+						(unsigned long long)cur.nBit5Transitions,
+						sBit5Rate, sBit5Rate * 0.5);
+					ImGui::Text("bit7 (SING):      %s   transitions %llu (%.1f /s  -> %.1f Hz square)",
+						cur.bCurBit7? "HIGH": "LOW",
+						(unsigned long long)cur.nBit7Transitions,
+						sBit7Rate, sBit7Rate * 0.5);
+					ImGui::TextUnformatted(
+						"A full square-wave cycle needs 2 transitions,"
+						" so audible pitch = transitions/s / 2.");
+				}
+				ImGui::End();
+			}
 			if (bShowStatusWindow) {
 				if (ImGui::Begin("Status", &bShowStatusWindow)) {
 					ImGui::TextUnformatted("SDL3 + ImGui frontend");

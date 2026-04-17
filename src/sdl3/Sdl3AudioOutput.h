@@ -3,7 +3,14 @@
 //
 // Owns a single SDL_AudioStream and synthesizes the PC-8801 sound
 // sources directly:
-//   - Beep (fixed 2400 Hz square wave, gated on/off by I/O port)
+//   - Beep (Port 40h bit5/bit7. bit5 gates the hardware 2400 Hz
+//           square wave; bit7 "SING" is the CPU-driven speaker line
+//           used for sampled voice. The emulator runs Z80 in a
+//           per-frame burst, so individual writes cannot be replayed
+//           pulse-accurately in wall-clock time. Instead we count
+//           bit5/bit7 transitions over a ~10 ms sliding window and
+//           synthesize a clean square wave at the derived frequency
+//           (same strategy as the original X88000 core).)
 //   - PCG  (three channels, frequency derived from each 8253 counter)
 //   - OPN  (Phase C — square waves replaced by YM2203 sample stream)
 //
@@ -45,11 +52,13 @@ public:
 
 	// --- Source state setters (called from the emulator thread) ---
 
-	// Beep gate. The beep is a fixed 2400 Hz square wave that is on
-	// when bEnabled is true. The "extended" flag is the second beep
-	// status bit reported by the I/O port; we treat it as an
-	// independent gate too (most software only uses the main bit).
-	void SetBeepEnabled(bool bEnabled, bool bExtended);
+	// Record a Port 40h write. bBeep is bit5 (gate for the hardware
+	// 2400 Hz square wave); bSing is bit7 ("SING") which drives the
+	// speaker output directly. We only maintain transition counters
+	// and the current state; the audio thread periodically samples
+	// these and derives a square-wave frequency over a sliding
+	// window (see Synthesize).
+	void SetBeepEnabled(bool bBeep, bool bSing);
 
 	// PCG channel state. nCounter is the 8253 counter value as
 	// reported by CPC88Pcg::GetITimerCounterValue:
@@ -64,6 +73,18 @@ public:
 	void SetPcgVolume   (int nVolume);
 	void SetBeepMute    (bool bMute);
 	void SetPcgMute     (bool bMute);
+
+	// Diagnostic snapshot of Port 40h activity (populated from the
+	// emulator thread by SetBeepEnabled). All counters are monotonic
+	// since Initialize().
+	struct SBeepStats {
+		uint64_t nWriteCount;      // total SetBeepEnabled calls
+		uint64_t nBit5Transitions; // bit5 edges (both rising and falling)
+		uint64_t nBit7Transitions; // bit7 edges
+		bool     bCurBit5;         // last observed bit5 state
+		bool     bCurBit7;         // last observed bit7 state
+	};
+	SBeepStats GetBeepStats() const;
 
 	// Push pre-mixed YM2203 samples produced by the emulator thread.
 	// The data is interleaved stereo int16 at the same sample rate as
@@ -87,9 +108,24 @@ private:
 	SDL_AudioDeviceID m_nDevice;
 
 	// Audio-thread state (refreshed from atomics each fill).
-	SSquareSource m_beepMain;
-	SSquareSource m_beepExtended;
 	SSquareSource m_pcg[PCG_CHANNEL_COUNT];
+
+	// Audio-thread BEEP state. The emulator runs Z80 in a per-frame
+	// burst (2-3 ms of wall clock for 16.7 ms of emulated time), so
+	// individual Port 40h writes are NOT evenly distributed in real
+	// time. We therefore cannot treat each write as a pulse with its
+	// real-time timestamp; instead we borrow the original X88000.cpp
+	// strategy of counting bit5/bit7 transitions over a sliding
+	// ~10 ms window and synthesizing a clean square wave at the
+	// derived frequency. Priority: bit7 toggles > bit5 toggles > bit5
+	// held HIGH (default 2400 Hz) > silence.
+	int      m_nBeepWindowSamples; // samples per frequency-update window
+	int      m_nBeepWindowCounter; // samples elapsed in current window
+	uint64_t m_nBeepPrevBit5Trans; // transition count at window start
+	uint64_t m_nBeepPrevBit7Trans;
+	double   m_dBeepOutPhase;      // 0..1, square wave phase
+	double   m_dBeepOutInc;        // phase increment per sample
+	bool     m_bBeepOutActive;     // is output currently emitting sound
 
 	// Cross-thread state. Volumes and gates are atomics so the audio
 	// thread does not need to lock.
@@ -98,10 +134,23 @@ private:
 	std::atomic<int>  m_anPcgVolume;
 	std::atomic<bool> m_abBeepMute;
 	std::atomic<bool> m_abPcgMute;
-	std::atomic<bool> m_abBeepMain;
-	std::atomic<bool> m_abBeepExt;
 	// Each PCG channel stores the current 8253 counter (-1 == off).
 	std::atomic<int>  m_anPcgCounter[PCG_CHANNEL_COUNT];
+
+	// Transition counters and current-state atomics maintained by
+	// the emulator thread inside SetBeepEnabled. The audio thread
+	// samples these periodically to infer the BEEP frequency; the
+	// BEEP Stats diagnostic window also reads them.
+	std::atomic<uint64_t>   m_nStatWriteCount;
+	std::atomic<uint64_t>   m_nStatBit5Trans;
+	std::atomic<uint64_t>   m_nStatBit7Trans;
+	std::atomic<bool>       m_bStatLastBit5;
+	std::atomic<bool>       m_bStatLastBit7;
+	// Previous-value tracker for edge detection. Written only from
+	// the emulator thread. Initial value false gives the correct
+	// "no edge" result on the first call.
+	bool                    m_bStatPrevBit5;
+	bool                    m_bStatPrevBit7;
 
 	// Single-producer / single-consumer ring buffer of stereo int16
 	// frames coming from the YM2203 (PC88Opna). Producer is the

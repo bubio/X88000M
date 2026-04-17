@@ -32,16 +32,28 @@ CSdl3AudioOutput::CSdl3AudioOutput() :
 	m_nSampleRate(0),
 	m_pStream(NULL),
 	m_nDevice(0),
+	m_nBeepWindowSamples(0),
+	m_nBeepWindowCounter(0),
+	m_nBeepPrevBit5Trans(0),
+	m_nBeepPrevBit7Trans(0),
+	m_dBeepOutPhase(0.0),
+	m_dBeepOutInc(0.0),
+	m_bBeepOutActive(false),
 	m_nOpnRingFrames(0),
 	m_nOpnWriteIdx(0),
 	m_nOpnReadIdx(0),
+	m_nStatWriteCount(0),
+	m_nStatBit5Trans(0),
+	m_nStatBit7Trans(0),
+	m_bStatLastBit5(false),
+	m_bStatLastBit7(false),
+	m_bStatPrevBit5(false),
+	m_bStatPrevBit7(false),
 	m_anVolume(50),
 	m_anBeepVolume(50),
 	m_anPcgVolume(50),
 	m_abBeepMute(false),
-	m_abPcgMute(false),
-	m_abBeepMain(false),
-	m_abBeepExt(false)
+	m_abPcgMute(false)
 {
 	for (int n = 0; n < PCG_CHANNEL_COUNT; n++) {
 		m_anPcgCounter[n] = -1;
@@ -83,6 +95,18 @@ bool CSdl3AudioOutput::Initialize(int nSampleRate)
 	m_nDevice = SDL_GetAudioStreamDevice(m_pStream);
 	m_nSampleRate = nSampleRate;
 
+	// BEEP frequency-detection window: 10 ms, matching the original
+	// X88000.cpp BEEP_TIME. Shorter windows react faster but undercount
+	// slow tones (300 Hz needs ~7 ms minimum).
+	m_nBeepWindowSamples = m_nSampleRate / 100;
+	if (m_nBeepWindowSamples < 1) m_nBeepWindowSamples = 1;
+	m_nBeepWindowCounter = 0;
+	m_nBeepPrevBit5Trans = 0;
+	m_nBeepPrevBit7Trans = 0;
+	m_dBeepOutPhase = 0.0;
+	m_dBeepOutInc = 0.0;
+	m_bBeepOutActive = false;
+
 	// Allocate the OPN ring buffer with enough headroom for ~250 ms of
 	// stereo audio. Power of two so the modulo can be a mask.
 	m_nOpnRingFrames = 16384;
@@ -108,10 +132,36 @@ void CSdl3AudioOutput::Shutdown()
 	m_bInitialized = false;
 }
 
-void CSdl3AudioOutput::SetBeepEnabled(bool bEnabled, bool bExtended)
+void CSdl3AudioOutput::SetBeepEnabled(bool bBeep, bool bSing)
 {
-	m_abBeepMain.store(bEnabled, std::memory_order_relaxed);
-	m_abBeepExt.store(bExtended, std::memory_order_relaxed);
+	if (!m_bInitialized) {
+		return;
+	}
+	// Emulator thread only. We just maintain transition counters and
+	// the current state; the audio thread reads these periodically to
+	// derive the BEEP frequency (see Synthesize).
+	m_nStatWriteCount.fetch_add(1, std::memory_order_relaxed);
+	if (bBeep != m_bStatPrevBit5) {
+		m_nStatBit5Trans.fetch_add(1, std::memory_order_relaxed);
+		m_bStatPrevBit5 = bBeep;
+	}
+	if (bSing != m_bStatPrevBit7) {
+		m_nStatBit7Trans.fetch_add(1, std::memory_order_relaxed);
+		m_bStatPrevBit7 = bSing;
+	}
+	m_bStatLastBit5.store(bBeep, std::memory_order_relaxed);
+	m_bStatLastBit7.store(bSing, std::memory_order_relaxed);
+}
+
+CSdl3AudioOutput::SBeepStats CSdl3AudioOutput::GetBeepStats() const
+{
+	SBeepStats s;
+	s.nWriteCount      = m_nStatWriteCount.load(std::memory_order_relaxed);
+	s.nBit5Transitions = m_nStatBit5Trans.load(std::memory_order_relaxed);
+	s.nBit7Transitions = m_nStatBit7Trans.load(std::memory_order_relaxed);
+	s.bCurBit5         = m_bStatLastBit5.load(std::memory_order_relaxed);
+	s.bCurBit7         = m_bStatLastBit7.load(std::memory_order_relaxed);
+	return s;
 }
 
 void CSdl3AudioOutput::SetPcgChannel(int nChannel, int nCounter)
@@ -177,19 +227,6 @@ void CSdl3AudioOutput::PushOpnSamples(const int16_t* pbBuf, int nFrames)
 
 void CSdl3AudioOutput::RefreshSourcesFromAtomics()
 {
-	// Beep main: 2400 Hz square wave when gate is on.
-	bool bBeepMain = m_abBeepMain.load(std::memory_order_relaxed);
-	bool bBeepExt  = m_abBeepExt.load(std::memory_order_relaxed);
-	bool bBeepMute = m_abBeepMute.load(std::memory_order_relaxed);
-	if (bBeepMute) {
-		bBeepMain = false;
-		bBeepExt  = false;
-	}
-	m_beepMain.bEnabled    = bBeepMain;
-	m_beepMain.dPhaseInc   = (double)BEEP_FREQUENCY_HZ / (double)m_nSampleRate;
-	m_beepExtended.bEnabled  = bBeepExt;
-	m_beepExtended.dPhaseInc = (double)BEEP_FREQUENCY_HZ / (double)m_nSampleRate;
-
 	// PCG: each channel has its own 8253 counter; freq = clk / counter.
 	bool bPcgMute = m_abPcgMute.load(std::memory_order_relaxed);
 	for (int n = 0; n < PCG_CHANNEL_COUNT; n++) {
@@ -251,19 +288,69 @@ void CSdl3AudioOutput::Synthesize(int16_t* pBuf, int nFrames)
 		m_nOpnReadIdx.store(nRead + (uint32_t)nWant, std::memory_order_release);
 	}
 
+	const bool bBeepMute = m_abBeepMute.load(std::memory_order_relaxed);
+
 	for (int nFrame = 0; nFrame < nFrames; nFrame++) {
+		// Periodically re-derive the BEEP frequency from the number
+		// of bit5/bit7 transitions observed during the last window.
+		// This mirrors the original X88000.cpp BEEP strategy and is
+		// robust against the frame-burst timing of the emulator
+		// thread (transitions bunch up in wall-clock time, but the
+		// total count over ~10 ms is still correct because the
+		// emulator is paced to real time at the frame level).
+		if (m_nBeepWindowCounter <= 0) {
+			uint64_t nCurBit5 = m_nStatBit5Trans.load(
+				std::memory_order_relaxed);
+			uint64_t nCurBit7 = m_nStatBit7Trans.load(
+				std::memory_order_relaxed);
+			uint64_t nDelta5 = nCurBit5 - m_nBeepPrevBit5Trans;
+			uint64_t nDelta7 = nCurBit7 - m_nBeepPrevBit7Trans;
+			m_nBeepPrevBit5Trans = nCurBit5;
+			m_nBeepPrevBit7Trans = nCurBit7;
+
+			double dWindowSec =
+				(double)m_nBeepWindowSamples
+				/ (double)m_nSampleRate;
+			double dFreq = 0.0;
+			bool bBit5High = m_bStatLastBit5.load(
+				std::memory_order_relaxed);
+			if (nDelta7 > 0) {
+				// bit7 (SING) took priority in the original core.
+				dFreq = (double)nDelta7
+					/ (2.0 * dWindowSec);
+			} else if (nDelta5 > 1) {
+				dFreq = (double)nDelta5
+					/ (2.0 * dWindowSec);
+			} else if (bBit5High) {
+				dFreq = (double)BEEP_FREQUENCY_HZ;
+			}
+
+			if (dFreq > 0.0) {
+				// Clamp to avoid aliasing at extreme toggle counts.
+				double dMax = (double)m_nSampleRate * 0.45;
+				if (dFreq > dMax) dFreq = dMax;
+				m_dBeepOutInc = dFreq / (double)m_nSampleRate;
+				m_bBeepOutActive = true;
+			} else {
+				m_bBeepOutActive = false;
+				m_dBeepOutInc = 0.0;
+			}
+			m_nBeepWindowCounter = m_nBeepWindowSamples;
+		}
+		m_nBeepWindowCounter--;
+
 		float fMix = 0.0f;
 
-		// Beep main + extended (extended is rarely used; sum it in too).
-		if (m_beepMain.bEnabled) {
-			fMix += (m_beepMain.dPhase < 0.5)? +fBeepAmp: -fBeepAmp;
-			m_beepMain.dPhase += m_beepMain.dPhaseInc;
-			if (m_beepMain.dPhase >= 1.0) m_beepMain.dPhase -= 1.0;
-		}
-		if (m_beepExtended.bEnabled) {
-			fMix += (m_beepExtended.dPhase < 0.5)? +fBeepAmp: -fBeepAmp;
-			m_beepExtended.dPhase += m_beepExtended.dPhaseInc;
-			if (m_beepExtended.dPhase >= 1.0) m_beepExtended.dPhase -= 1.0;
+		// BEEP: pure square wave at the frequency inferred from the
+		// sliding transition-count window. Unipolar (0 / +amp) so the
+		// mean value changes with the gate — same trick Bubilator88
+		// uses.
+		if (!bBeepMute && m_bBeepOutActive) {
+			if (m_dBeepOutPhase < 0.5) {
+				fMix += fBeepAmp;
+			}
+			m_dBeepOutPhase += m_dBeepOutInc;
+			if (m_dBeepOutPhase >= 1.0) m_dBeepOutPhase -= 1.0;
 		}
 
 		// PCG square waves.
