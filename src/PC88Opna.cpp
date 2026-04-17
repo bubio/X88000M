@@ -1857,60 +1857,60 @@ int CPC88Opna::RenderFmChannel(int nChannel) {
 	ch.anFeedback[1] = ch.anFeedback[0];
 	ch.anFeedback[0] = nOp1Out;
 
-	// The remaining operators are routed per-algorithm. Modulation
-	// inputs are passed through unshifted: the operator output is
-	// already in the same units as the 10-bit phase index, so the
-	// addition (and subsequent &0x3FF mask in RenderFmOperator) does
-	// the right thing on its own. (Previously we shifted modulation
-	// by >> 1 here, which combined with our 13-bit op output gave
-	// half the modulation depth of the standard YM2203 — leading to
-	// a notably duller / less FM-like timbre with weak harmonics.)
+	// Op→op modulation inputs are shifted right by 1 to match the
+	// standard YM2203 modulation depth. Op output peak is ±8192
+	// (14-bit, since the 2026-04 update). The manual specifies max
+	// modulator output → 8π peak phase deviation (= 4096 phase units
+	// over a 1024-unit cycle). Passing unshifted gave 16π (2× too
+	// much), which produced the "明るすぎ・荒い" timbre seen in FFT
+	// vs fmgen (over-strong 2nd/3rd harmonics). Feedback path is
+	// scaled separately via >> (10-FB) above, so it stays correct.
 	switch (ch.btAlgo) {
 	case 0:
 		// OP1 → OP2 → OP3 → OP4 → out  (serial 4-op)
-		nOp2Out = RenderFmOperator(ch.aOp[1], nOp1Out);
-		nOp3Out = RenderFmOperator(ch.aOp[2], nOp2Out);
-		nOp4Out = RenderFmOperator(ch.aOp[3], nOp3Out);
+		nOp2Out = RenderFmOperator(ch.aOp[1], nOp1Out >> 1);
+		nOp3Out = RenderFmOperator(ch.aOp[2], nOp2Out >> 1);
+		nOp4Out = RenderFmOperator(ch.aOp[3], nOp3Out >> 1);
 		nMix = nOp4Out;
 		break;
 	case 1:
 		// (OP1 + OP2) → OP3 → OP4 → out  (parallel mods, serial out)
 		nOp2Out = RenderFmOperator(ch.aOp[1], 0);
-		nOp3Out = RenderFmOperator(ch.aOp[2], nOp1Out + nOp2Out);
-		nOp4Out = RenderFmOperator(ch.aOp[3], nOp3Out);
+		nOp3Out = RenderFmOperator(ch.aOp[2], (nOp1Out + nOp2Out) >> 1);
+		nOp4Out = RenderFmOperator(ch.aOp[3], nOp3Out >> 1);
 		nMix = nOp4Out;
 		break;
 	case 2:
 		// (OP1 + (OP2 → OP3)) → OP4 → out
 		nOp2Out = RenderFmOperator(ch.aOp[1], 0);
-		nOp3Out = RenderFmOperator(ch.aOp[2], nOp2Out);
-		nOp4Out = RenderFmOperator(ch.aOp[3], nOp1Out + nOp3Out);
+		nOp3Out = RenderFmOperator(ch.aOp[2], nOp2Out >> 1);
+		nOp4Out = RenderFmOperator(ch.aOp[3], (nOp1Out + nOp3Out) >> 1);
 		nMix = nOp4Out;
 		break;
 	case 3:
 		// ((OP1 → OP2) + OP3) → OP4 → out
-		nOp2Out = RenderFmOperator(ch.aOp[1], nOp1Out);
+		nOp2Out = RenderFmOperator(ch.aOp[1], nOp1Out >> 1);
 		nOp3Out = RenderFmOperator(ch.aOp[2], 0);
-		nOp4Out = RenderFmOperator(ch.aOp[3], nOp2Out + nOp3Out);
+		nOp4Out = RenderFmOperator(ch.aOp[3], (nOp2Out + nOp3Out) >> 1);
 		nMix = nOp4Out;
 		break;
 	case 4:
 		// (OP1 → OP2☆) + (OP3 → OP4☆)  (two 2-op chains, both heard)
-		nOp2Out = RenderFmOperator(ch.aOp[1], nOp1Out);
+		nOp2Out = RenderFmOperator(ch.aOp[1], nOp1Out >> 1);
 		nOp3Out = RenderFmOperator(ch.aOp[2], 0);
-		nOp4Out = RenderFmOperator(ch.aOp[3], nOp3Out);
+		nOp4Out = RenderFmOperator(ch.aOp[3], nOp3Out >> 1);
 		nMix = nOp2Out + nOp4Out;
 		break;
 	case 5:
 		// OP1 → {OP2☆, OP3☆, OP4☆}  (1 modulator, 3 carriers)
-		nOp2Out = RenderFmOperator(ch.aOp[1], nOp1Out);
-		nOp3Out = RenderFmOperator(ch.aOp[2], nOp1Out);
-		nOp4Out = RenderFmOperator(ch.aOp[3], nOp1Out);
+		nOp2Out = RenderFmOperator(ch.aOp[1], nOp1Out >> 1);
+		nOp3Out = RenderFmOperator(ch.aOp[2], nOp1Out >> 1);
+		nOp4Out = RenderFmOperator(ch.aOp[3], nOp1Out >> 1);
 		nMix = nOp2Out + nOp3Out + nOp4Out;
 		break;
 	case 6:
 		// (OP1 → OP2☆) + OP3☆ + OP4☆
-		nOp2Out = RenderFmOperator(ch.aOp[1], nOp1Out);
+		nOp2Out = RenderFmOperator(ch.aOp[1], nOp1Out >> 1);
 		nOp3Out = RenderFmOperator(ch.aOp[2], 0);
 		nOp4Out = RenderFmOperator(ch.aOp[3], 0);
 		nMix = nOp2Out + nOp3Out + nOp4Out;
