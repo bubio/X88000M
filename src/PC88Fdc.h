@@ -580,6 +580,10 @@ public:
 	static uint8_t ReadStatusReg() {
 		return m_btStatusReg;
 	}
+	// drive accessing (for status LED)
+	static bool IsDriveAccessing(int nDrive) {
+		return (m_nPhase == PHASE_EXECUTION) && (m_nExecDrive == nDrive);
+	}
 	//read data register
 	static uint8_t ReadDataReg();
 	// write data register
