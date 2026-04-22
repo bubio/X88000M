@@ -3429,6 +3429,7 @@ int main(int argc, char** argv) {
 #ifdef X88000_SDL3_HAS_CORE
 	if (g_audio.Initialize()) {
 		// Apply persisted volume / mute settings.
+		g_audio.SetMasterVolume(atoi(settings.GetSectionString(SECTION_OPTION, "mastervolume", "50").c_str()));
 		g_audio.SetBeepVolume(atoi(settings.GetSectionString(SECTION_OPTION, "beepvolume", "50").c_str()));
 		g_audio.SetPcgVolume (atoi(settings.GetSectionString(SECTION_OPTION, "pcgvolume",  "50").c_str()));
 		g_audio.SetBeepMute  (ParseBoolEntry(settings.GetSectionString(SECTION_OPTION, "beepmute", "off"), false));
@@ -3436,7 +3437,7 @@ int main(int argc, char** argv) {
 	}
 #endif
 
-	int nInitialWindowW = settings.GetInt("window.width", 640);
+	int nInitialWindowW = settings.GetInt("window.width", 712);
 	int nInitialWindowH = settings.GetInt("window.height", 428);
 	if (nInitialWindowW < 320) { nInitialWindowW = 320; }
 	if (nInitialWindowH < 240) { nInitialWindowH = 240; }
@@ -4134,6 +4135,136 @@ int main(int argc, char** argv) {
 			// Save menu bar height before Render() finalizes the frame.
 			float fMenuBarH = ImGui::GetFrameHeight()
 				+ ImGui::GetStyle().FramePadding.y;
+#ifdef X88000_SDL3_HAS_CORE
+			// Side panel (72px wide, right of the 640px emu area)
+			{
+				static uint64_t s_nLastClockTick = 0;
+				static int      s_nClock = 4;
+				static int      s_nBasicMode = CPC88Z80Main::BASICMODE_N88V2;
+				static bool     s_bHighSpeed = true;
+				// LED hold: keep lit for 100ms after last access
+				static uint64_t s_anFddLitUntil[CPC88Fdc::DRIVE_MAX] = {};
+				static int      s_nMasterVol = atoi(
+					settings.GetSectionString(SECTION_OPTION, "mastervolume", "50").c_str());
+
+				uint64_t nNow = SDL_GetTicks();
+				if (nNow - s_nLastClockTick >= 2000 || s_nLastClockTick == 0) {
+					s_nLastClockTick = nNow;
+					s_nClock     = CPC88::GetBaseClock();
+					s_nBasicMode = CPC88::GetBasicMode();
+					s_bHighSpeed = CPC88::IsHighSpeedMode();
+				}
+
+				for (int i = 0; i < CPC88Fdc::DRIVE_MAX; ++i) {
+					if (CPC88::Fdc().IsDriveAccessing(i)) s_anFddLitUntil[i] = nNow + 100;
+				}
+
+				const char* pszBasic = "N88-V2";
+				switch (s_nBasicMode) {
+				case CPC88Z80Main::BASICMODE_N:
+					pszBasic = "N-BASIC"; break;
+				case CPC88Z80Main::BASICMODE_N88V1:
+					pszBasic = s_bHighSpeed ? "N88-V1H" : "N88-V1S"; break;
+				case CPC88Z80Main::BASICMODE_N88V2:
+					pszBasic = "N88-V2";  break;
+				case CPC88Z80Main::BASICMODE_N80V1:
+					pszBasic = "N80-V1";  break;
+				case CPC88Z80Main::BASICMODE_N80V2:
+					pszBasic = "N80-V2";  break;
+				}
+
+				// Match panel height to the letterboxed emu screen height
+				float fLogicalW  = ImGui::GetIO().DisplaySize.x;
+				float fLogicalH  = ImGui::GetIO().DisplaySize.y;
+				float fAvailW    = fLogicalW - 72.0f;
+				float fAvailH    = fLogicalH - fMenuBarH;
+				float fEmuScale  = (fAvailW / 640.0f < fAvailH / 400.0f)
+					? fAvailW / 640.0f : fAvailH / 400.0f;
+				float fEmuH      = 400.0f * fEmuScale;
+				float fPanelY    = fMenuBarH + (fAvailH - fEmuH) * 0.5f;
+				ImGui::SetNextWindowPos(ImVec2(fLogicalW - 72.0f, fPanelY));
+				ImGui::SetNextWindowSize(ImVec2(72.0f, fEmuH));
+				ImGui::Begin("##sidepanel", nullptr,
+					ImGuiWindowFlags_NoResize       |
+					ImGuiWindowFlags_NoMove         |
+					ImGuiWindowFlags_NoTitleBar     |
+					ImGuiWindowFlags_NoScrollbar    |
+					ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+				ImDrawList* dl = ImGui::GetWindowDrawList();
+				const float fR = 5.0f;
+				const ImU32 colOn    = IM_COL32(220, 50, 50, 255);
+				const ImU32 colOff   = IM_COL32(80, 20, 20, 255);
+				const ImU32 colNoEqu = IM_COL32(35, 12, 12, 255);
+
+				// Center a string in the panel window
+				auto TextCentered = [](const char* s) {
+					float fW = ImGui::CalcTextSize(s).x;
+					ImGui::SetCursorPosX((ImGui::GetWindowWidth() - fW) * 0.5f);
+					ImGui::TextUnformatted(s);
+				};
+
+				// BASIC mode
+				TextCentered(pszBasic);
+				ImGui::Separator();
+
+				// Clock (updated every 2s)
+				char szClock[12];
+				snprintf(szClock, sizeof(szClock), "%dMHz", s_nClock);
+				TextCentered(szClock);
+				ImGui::Separator();
+
+				// Drive section header + 4 LEDs (LED and number vertically centered)
+				TextCentered("Drive");
+				{
+					const float fGap   = 4.0f;
+					const float fLineH = ImGui::GetTextLineHeight();
+					for (int i = 0; i < CPC88Fdc::DRIVE_MAX; ++i) {
+						bool bLit   = nNow <= s_anFddLitUntil[i];
+						bool bEquip = CPC88::Fdc().IsDriveEquip(i);
+						ImU32 col   = bLit ? colOn : (bEquip ? colOff : colNoEqu);
+
+						char szNum[4];
+						snprintf(szNum, sizeof(szNum), "%d", i + 1);
+						float fNumW  = ImGui::CalcTextSize(szNum).x;
+						float fRowW  = fR * 2.0f + fGap + fNumW;
+						float fStartX = (ImGui::GetWindowWidth() - fRowW) * 0.5f;
+
+						// Draw LED circle centered vertically on the text line
+						ImGui::SetCursorPosX(fStartX);
+						ImVec2 pScreen = ImGui::GetCursorScreenPos();
+						dl->AddCircleFilled(
+							ImVec2(pScreen.x + fR, pScreen.y + fLineH * 0.5f), fR, col);
+
+						// Draw number on the same row, past the circle
+						ImGui::SetCursorPosX(fStartX + fR * 2.0f + fGap);
+						ImGui::TextUnformatted(szNum);
+					}
+				}
+				ImGui::Separator();
+
+				// Volume — label / current value / fixed-height vertical slider
+				TextCentered("Vol");
+				char szVol[8];
+				snprintf(szVol, sizeof(szVol), "%d", s_nMasterVol);
+				TextCentered(szVol);
+				{
+					const float fSliderW = 16.0f;
+					const float fSliderH = 60.0f;
+					ImGui::SetCursorPosX(ImGui::GetCursorPosX()
+						+ (ImGui::GetContentRegionAvail().x - fSliderW) * 0.5f);
+					if (ImGui::VSliderInt("##vol", ImVec2(fSliderW, fSliderH),
+							&s_nMasterVol, 0, 100, "")) {
+						g_audio.SetMasterVolume(s_nMasterVol);
+						char szBuf[8];
+						snprintf(szBuf, sizeof(szBuf), "%d", s_nMasterVol);
+						settings.SetSectionString(SECTION_OPTION, "mastervolume", szBuf);
+					}
+				}
+
+				ImGui::End();
+			}
+#endif // X88000_SDL3_HAS_CORE
 			ImGui::Render();
 #endif
 
@@ -4145,11 +4276,12 @@ int main(int argc, char** argv) {
 				int nWindowH = 0;
 				SDL_GetRenderOutputSize(pRenderer, &nWindowW, &nWindowH);
 #ifdef X88000_SDL3_HAS_IMGUI
-				// Offset below the ImGui menu bar
+				// Offset below the ImGui menu bar; right 72px is reserved for side panel
 				float fScale = SDL_GetWindowDisplayScale(pWindow);
 				float fMenuPx = fMenuBarH * fScale;
+				int nEmuW = nWindowW - (int)(72.0f * fScale);
 				SDL_FRect rctDst = CalcLetterboxRect(
-					nWindowW, (int)(nWindowH - fMenuPx), 640, 400);
+					nEmuW, (int)(nWindowH - fMenuPx), 640, 400);
 				rctDst.y += fMenuPx;
 #else
 				SDL_FRect rctDst = CalcLetterboxRect(nWindowW, nWindowH, 640, 400);
