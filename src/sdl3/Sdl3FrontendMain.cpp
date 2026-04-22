@@ -3899,6 +3899,10 @@ int main(int argc, char** argv) {
 					}
 					ImGui::Separator();
 #endif
+					if (ImGui::MenuItem("Reset Window Size")) {
+						SDL_SetWindowSize(pWindow, 712, 428);
+					}
+					ImGui::Separator();
 					if (ImGui::MenuItem("Quit X88000M")) {
 						bRunning = false;
 					}
@@ -4192,7 +4196,8 @@ int main(int argc, char** argv) {
 					ImGuiWindowFlags_NoBringToFrontOnFocus);
 
 				ImDrawList* dl = ImGui::GetWindowDrawList();
-				const float fR = 5.0f;
+				const float fLedW = 16.0f;
+				const float fLedH =  8.0f;
 				const ImU32 colOn    = IM_COL32(220, 50, 50, 255);
 				const ImU32 colOff   = IM_COL32(80, 20, 20, 255);
 				const ImU32 colNoEqu = IM_COL32(35, 12, 12, 255);
@@ -4226,18 +4231,21 @@ int main(int argc, char** argv) {
 
 						char szNum[4];
 						snprintf(szNum, sizeof(szNum), "%d", i + 1);
-						float fNumW  = ImGui::CalcTextSize(szNum).x;
-						float fRowW  = fR * 2.0f + fGap + fNumW;
+						float fNumW   = ImGui::CalcTextSize(szNum).x;
+						float fRowW   = fLedW + fGap + fNumW;
 						float fStartX = (ImGui::GetWindowWidth() - fRowW) * 0.5f;
 
-						// Draw LED circle centered vertically on the text line
+						// Draw LED rectangle centered vertically on the text line
 						ImGui::SetCursorPosX(fStartX);
 						ImVec2 pScreen = ImGui::GetCursorScreenPos();
-						dl->AddCircleFilled(
-							ImVec2(pScreen.x + fR, pScreen.y + fLineH * 0.5f), fR, col);
+						float fLedY = pScreen.y + (fLineH - fLedH) * 0.5f;
+						dl->AddRectFilled(
+							ImVec2(pScreen.x,         fLedY),
+							ImVec2(pScreen.x + fLedW, fLedY + fLedH),
+							col);
 
-						// Draw number on the same row, past the circle
-						ImGui::SetCursorPosX(fStartX + fR * 2.0f + fGap);
+						// Draw number on the same row, past the LED
+						ImGui::SetCursorPosX(fStartX + fLedW + fGap);
 						ImGui::TextUnformatted(szNum);
 					}
 				}
