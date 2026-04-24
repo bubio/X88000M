@@ -4139,8 +4139,10 @@ int main(int argc, char** argv) {
 			// Save menu bar height before Render() finalizes the frame.
 			float fMenuBarH = ImGui::GetFrameHeight()
 				+ ImGui::GetStyle().FramePadding.y;
+			static bool     s_bPanelLeft = ParseBoolEntry(
+				settings.GetSectionString(SECTION_OPTION, "sidepanel_left", "off"), false);
 #ifdef X88000_SDL3_HAS_CORE
-			// Side panel (72px wide, right of the 640px emu area)
+			// Side panel (72px wide, on left or right of the 640px emu area)
 			{
 				static uint64_t s_nLastClockTick = 0;
 				static int      s_nClock = 4;
@@ -4186,7 +4188,8 @@ int main(int argc, char** argv) {
 					? fAvailW / 640.0f : fAvailH / 400.0f;
 				float fEmuH      = 400.0f * fEmuScale;
 				float fPanelY    = fMenuBarH + (fAvailH - fEmuH) * 0.5f;
-				ImGui::SetNextWindowPos(ImVec2(fLogicalW - 72.0f, fPanelY));
+				float fPanelX    = s_bPanelLeft ? 0.0f : (fLogicalW - 72.0f);
+				ImGui::SetNextWindowPos(ImVec2(fPanelX, fPanelY));
 				ImGui::SetNextWindowSize(ImVec2(72.0f, fEmuH));
 				ImGui::Begin("##sidepanel", nullptr,
 					ImGuiWindowFlags_NoResize       |
@@ -4208,6 +4211,20 @@ int main(int argc, char** argv) {
 					ImGui::SetCursorPosX((ImGui::GetWindowWidth() - fW) * 0.5f);
 					ImGui::TextUnformatted(s);
 				};
+
+				// Panel side toggle: move button to the opposite side
+				// (<< when on right, >> when on left)
+				{
+					const char* pszLabel = s_bPanelLeft ? ">>" : "<<";
+					const float fBtnW = 32.0f;
+					ImGui::SetCursorPosX((ImGui::GetWindowWidth() - fBtnW) * 0.5f);
+					if (ImGui::Button(pszLabel, ImVec2(fBtnW, 0))) {
+						s_bPanelLeft = !s_bPanelLeft;
+						settings.SetSectionString(SECTION_OPTION,
+							"sidepanel_left", BoolToOnOff(s_bPanelLeft));
+					}
+				}
+				ImGui::Separator();
 
 				// BASIC mode
 				TextCentered(pszBasic);
@@ -4258,7 +4275,7 @@ int main(int argc, char** argv) {
 				TextCentered(szVol);
 				{
 					const float fSliderW = 16.0f;
-					const float fSliderH = 60.0f;
+					const float fSliderH = 72.0f;
 					ImGui::SetCursorPosX(ImGui::GetCursorPosX()
 						+ (ImGui::GetContentRegionAvail().x - fSliderW) * 0.5f);
 					if (ImGui::VSliderInt("##vol", ImVec2(fSliderW, fSliderH),
@@ -4284,13 +4301,15 @@ int main(int argc, char** argv) {
 				int nWindowH = 0;
 				SDL_GetRenderOutputSize(pRenderer, &nWindowW, &nWindowH);
 #ifdef X88000_SDL3_HAS_IMGUI
-				// Offset below the ImGui menu bar; right 72px is reserved for side panel
+				// Offset below the ImGui menu bar; 72px on one side is reserved for side panel
 				float fScale = SDL_GetWindowDisplayScale(pWindow);
 				float fMenuPx = fMenuBarH * fScale;
-				int nEmuW = nWindowW - (int)(72.0f * fScale);
+				float fPanelPx = 72.0f * fScale;
+				int nEmuW = nWindowW - (int)fPanelPx;
 				SDL_FRect rctDst = CalcLetterboxRect(
 					nEmuW, (int)(nWindowH - fMenuPx), 640, 400);
 				rctDst.y += fMenuPx;
+				if (s_bPanelLeft) rctDst.x += fPanelPx;
 #else
 				SDL_FRect rctDst = CalcLetterboxRect(nWindowW, nWindowH, 640, 400);
 #endif
