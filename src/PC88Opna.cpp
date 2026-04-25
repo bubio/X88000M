@@ -606,8 +606,11 @@ void CPC88Opna::UpdateSsgTickRate() {
 	// tick rate of master / prescaler / 4 = 250 kHz with half-period
 	// toggle: f = 250 000 / (2 × TP). User-verified pitch matches
 	// PC-88 hardware for Ys FEENA and ハイドライド3.
+	// YM2203 chip clock is a dedicated ~4 MHz crystal, independent of
+	// the Z80 CPU clock (which can be 4 or 8 MHz on PC-8801).
+	const long long nChipHz = 4000000LL;
 	long long nSsgClockHz =
-		(long long)m_nBaseClock * 1000000LL / m_nPreScalerPSG / 4LL;
+		nChipHz / m_nPreScalerPSG / 4LL;
 	m_nSsgTicksPerSampleX16 = (int)((nSsgClockHz * (1LL << 16)) / m_nSampleRate);
 	if (m_nSsgTicksPerSampleX16 < 0) {
 		m_nSsgTicksPerSampleX16 = 0;
@@ -1118,9 +1121,11 @@ void CPC88Opna::UpdateFmTickRate() {
 		m_nFmPhaseScaleX16     = 0;
 		return;
 	}
-	// FM section clock = base / prescaler_fm / 6.
+	// FM section clock = chip / prescaler_fm / 6. The YM2203 chip clock
+	// is a dedicated ~4 MHz crystal on PC-8801, independent of Z80 clock.
+	const long long nChipHz = 4000000LL;
 	long long nFmClockHz =
-		(long long)m_nBaseClock * 1000000LL / m_nPreScalerFM / 6LL;
+		nChipHz / m_nPreScalerFM / 6LL;
 	m_nFmTicksPerSampleX16 = (int)((nFmClockHz * (1LL << 16)) / m_nSampleRate);
 	if (m_nFmTicksPerSampleX16 < 0) {
 		m_nFmTicksPerSampleX16 = 0;
@@ -1132,7 +1137,7 @@ void CPC88Opna::UpdateFmTickRate() {
 	// YM2203 spec frequency formula. RecomputeFmOperatorPhaseInc()
 	// multiplies (FNUM << BLOCK) by this scale to derive the per-
 	// output-sample phase increment.
-	long long nMaster = (long long)m_nBaseClock * 1000000LL;
+	long long nMaster = nChipHz;
 	long long nDiv    = (long long)m_nPreScalerFM * 24LL * (long long)m_nSampleRate;
 	if (nDiv > 0) {
 		m_nFmPhaseScaleX16 = (int)((nMaster * (1LL << 16)) / nDiv);
