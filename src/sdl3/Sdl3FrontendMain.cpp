@@ -3520,6 +3520,11 @@ int main(int argc, char** argv) {
 	SDL_WindowID nMainWindowID = SDL_GetWindowID(pWindow);
 	bool bRunning = true;
 	Uint64 nNextFrameTick = SDL_GetPerformanceCounter();
+
+	// Emulation FPS measurement (counts UpdateCoreFrame() calls per second window).
+	int      nEmuFrameCount = 0;
+	uint64_t nEmuFpsWindowStart = SDL_GetTicks();
+	float    fEmuFps = 0.0f;
 	while (bRunning) {
 		SDL_Event evt;
 		while (SDL_PollEvent(&evt)) {
@@ -3772,6 +3777,16 @@ int main(int argc, char** argv) {
 			}
 			UpdateCoreFrame();
 			UploadCoreFrameToTexture(pFrameTexture, vArgbBuffer);
+			++nEmuFrameCount;
+		}
+		{
+			uint64_t nFpsNow = SDL_GetTicks();
+			uint64_t nElapsed = nFpsNow - nEmuFpsWindowStart;
+			if (nElapsed >= 500) {
+				fEmuFps = (float)nEmuFrameCount * 1000.0f / (float)nElapsed;
+				nEmuFrameCount = 0;
+				nEmuFpsWindowStart = nFpsNow;
+			}
 		}
 #endif
 
@@ -4286,6 +4301,12 @@ int main(int argc, char** argv) {
 						settings.SetSectionString(SECTION_OPTION, "mastervolume", szBuf);
 					}
 				}
+
+				ImGui::Separator();
+				TextCentered("FPS");
+				char szFps[16];
+				snprintf(szFps, sizeof(szFps), "%.1f", fEmuFps);
+				TextCentered(szFps);
 
 				ImGui::End();
 			}
