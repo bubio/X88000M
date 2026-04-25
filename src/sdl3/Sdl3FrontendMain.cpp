@@ -578,7 +578,7 @@ void DrawDiskImageManagerWindow(bool& bShow, SDL_Window* pWindow)
 					ImGui::PushID(nImage);
 
 					std::string strLabel = "#" + std::to_string(nImage+1);
-					std::string strName = pDisk->GetImageName();
+					std::string strName = NX88Utility::ConvSJIStoUTF8(pDisk->GetImageName());
 					if (!strName.empty()) {
 						strLabel += " — ";
 						strLabel += strName;
@@ -2743,7 +2743,7 @@ std::string GetDriveDiskImageLabel(int nDrive)
 		return "(missing image)";
 	}
 	std::string strLabel = "#" + std::to_string(nImageIndex+1);
-	std::string strName = pDiskImage->GetImageName();
+	std::string strName = NX88Utility::ConvSJIStoUTF8(pDiskImage->GetImageName());
 	if (!strName.empty()) {
 		strLabel += " ";
 		strLabel += strName;
