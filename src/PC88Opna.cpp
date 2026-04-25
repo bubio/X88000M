@@ -387,18 +387,19 @@ uint8_t CPC88Opna::ReadData() {
 		return m_abtRegisters[m_nAddress];
 	}
 	if (m_nAddress == 0x0E || m_nAddress == 0x0F) {
-		// I/O ports $0E/$0F: direction is controlled by $07 bits 6/7.
-		// bit = 0 → input mode (read external hardware state)
-		// bit = 1 → output mode (read back last written value)
-		// On PC-88, $0E is joystick input (active low: $FF = no
-		// buttons pressed). When in input mode and no external
-		// hardware is connected, return $FF so the game sees "idle".
-		int nDirBit = (m_nAddress == 0x0E) ? 6 : 7;
-		bool bOutputMode = (m_abtRegisters[0x07] >> nDirBit) & 1;
-		if (bOutputMode) {
-			return m_abtRegisters[m_nAddress];
-		}
-		return 0xFF;  // input mode: no joystick press
+		// I/O ports $0E/$0F on PC-88 are wired to the joystick input
+		// pins. $07 bits 6/7 select "input" or "output" mode for these
+		// ports inside the YM2203, but on real PC-88 hardware the pins
+		// are externally driven by the joystick connector regardless.
+		// Some sound drivers leave bits 6/7 set to "output" as a side
+		// effect of writing the mixer (their RMW preserves whatever was
+		// in $07 at boot, which can be 1). If we honoured that and
+		// returned m_abtRegisters[$0E/$0F] (a mostly-zero internal
+		// value), the game would see "all directions + all buttons
+		// pressed" — Hydlide 3 then auto-skips its opening, Xak 2 self-
+		// navigates the title menu, etc. So always report idle ($FF)
+		// here, matching what an unconnected joystick would read.
+		return 0xFF;
 	}
 	return 0xFF;
 }
