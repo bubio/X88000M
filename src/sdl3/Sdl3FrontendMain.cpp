@@ -758,7 +758,7 @@ void DrawDebugMainWindow(bool& bShow)
 			ImGui::Separator();
 
 				// Register display: legacy 3-line horizontal layout
-			ImVec4 colLabel(0.4f, 0.4f, 0.9f, 1.0f); // blue labels
+			ImVec4 colLabel(0.7f, 0.85f, 1.0f, 1.0f); // light blue labels
 
 			// Line 1: F A BC DE HL IX IY
 			ImGui::TextColored(colLabel, " F :"); ImGui::SameLine(0, 0);
@@ -2418,6 +2418,8 @@ void ApplyTintStyle()
 		tint.y + (1.0f - tint.y) * 0.3f,
 		tint.z + (1.0f - tint.z) * 0.3f, 1.0f);
 	ImGuiStyle& style = ImGui::GetStyle();
+	style.Colors[ImGuiCol_Text]             = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+	style.Colors[ImGuiCol_TextDisabled]     = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
 	style.Colors[ImGuiCol_TitleBg]          = ImVec4(tintDim.x, tintDim.y, tintDim.z, 0.2f);
 	style.Colors[ImGuiCol_TitleBgActive]    = ImVec4(tint.x, tint.y, tint.z, 0.4f);
 	style.Colors[ImGuiCol_Header]           = ImVec4(tint.x, tint.y, tint.z, 0.5f);
