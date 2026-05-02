@@ -217,6 +217,10 @@ const char* BoolToOnOff(bool bValue)
 	return bValue? "on": "off";
 }
 
+// Input remap flags: read by UpdateKeyMatricsFromSDL, written by env settings UI.
+bool g_bArrowAsKeypad     = false;
+bool g_bNumberRowAsKeypad = false;
+
 // Apply persisted env settings from settings (X88000.ini, [option] section)
 // to the freshly-initialized PC88 core. Must be called after CPC88::Initialize()
 // and before the first CPC88::Reset().
@@ -274,6 +278,11 @@ void ApplyEnvSettingsFromIni(CSdl3Settings& settings)
 		bool bInterlace = ParseBoolEntry(strInterlace, false);
 		CX88ScreenDrawer::SetInterlace(bInterlace);
 	}
+	// Input remap
+	g_bArrowAsKeypad = ParseBoolEntry(
+		settings.GetSectionString(SECTION_OPTION, "arrow_as_keypad", "off"), false);
+	g_bNumberRowAsKeypad = ParseBoolEntry(
+		settings.GetSectionString(SECTION_OPTION, "numrow_as_keypad", "off"), false);
 }
 
 // Volatile mirror of env settings used by the ImGui window. These are
@@ -294,6 +303,8 @@ struct SEnvSettingsView {
 	bool bHiResolution;
 	bool bOptionFont;
 	int  nBoostLimiter;
+	bool bArrowAsKeypad;
+	bool bNumberRowAsKeypad;
 	bool bLoaded;
 	SEnvSettingsView() :
 		nBasicChoice(BASIC_CHOICE_V2),
@@ -311,6 +322,8 @@ struct SEnvSettingsView {
 		bHiResolution(false),
 		bOptionFont(false),
 		nBoostLimiter(0),
+		bArrowAsKeypad(false),
+		bNumberRowAsKeypad(false),
 		bLoaded(false)
 	{
 	}
@@ -336,6 +349,8 @@ void LoadEnvSettingsView(SEnvSettingsView& view, CSdl3Settings& settings)
 	view.bHiResolution = CPC88::IsHiresolution();
 	view.bOptionFont   = CPC88::IsOptionFont();
 	view.nBoostLimiter = atoi(settings.GetSectionString(SECTION_OPTION, "boostlim", "0").c_str());
+	view.bArrowAsKeypad = g_bArrowAsKeypad;
+	view.bNumberRowAsKeypad = g_bNumberRowAsKeypad;
 	if (view.nFrameRate <= 0) {
 		view.nFrameRate = 20;
 	}
@@ -469,6 +484,17 @@ bool DrawEnvSettingsWindow(bool& bShow, SEnvSettingsView& view, CSdl3Settings& s
 				CX88ScreenDrawer::SetInterlace(view.bInterlace);
 				CPC88::Z80Main().SetGVRamUpdate(true);
 				settings.SetSectionString(SECTION_OPTION, "interlace", BoolToOnOff(view.bInterlace));
+			}
+		}
+
+		if (ImGui::CollapsingHeader("Input", ImGuiTreeNodeFlags_DefaultOpen)) {
+			if (ImGui::Checkbox("Arrow keys as numeric keypad (8/2/4/6)", &view.bArrowAsKeypad)) {
+				g_bArrowAsKeypad = view.bArrowAsKeypad;
+				settings.SetSectionString(SECTION_OPTION, "arrow_as_keypad", BoolToOnOff(view.bArrowAsKeypad));
+			}
+			if (ImGui::Checkbox("Number row as numeric keypad (0-9)", &view.bNumberRowAsKeypad)) {
+				g_bNumberRowAsKeypad = view.bNumberRowAsKeypad;
+				settings.SetSectionString(SECTION_OPTION, "numrow_as_keypad", BoolToOnOff(view.bNumberRowAsKeypad));
 			}
 		}
 
@@ -3223,29 +3249,52 @@ void UpdateKeyMatricsFromSDL()
 		bShift = (nModState & SDL_KMOD_SHIFT) != 0;
 	}
 
-	bool bUpArrow = IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_UP);
-	bool bRightArrow = IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_RIGHT);
-	if (CPC88::Z80Main().GetBasicMode() == CPC88Z80Main::BASICMODE_N80V1) {
-		if (IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_DOWN)) {
+	bool bRawUp    = IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_UP);
+	bool bRawDown  = IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_DOWN);
+	bool bRawLeft  = IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_LEFT);
+	bool bRawRight = IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_RIGHT);
+
+	bool bArrowKP = g_bArrowAsKeypad;
+	bool bUpArrow    = bArrowKP ? false : bRawUp;
+	bool bDownArrow  = bArrowKP ? false : bRawDown;
+	bool bLeftArrow  = bArrowKP ? false : bRawLeft;
+	bool bRightArrow = bArrowKP ? false : bRawRight;
+	if ((!bArrowKP) && (CPC88::Z80Main().GetBasicMode() == CPC88Z80Main::BASICMODE_N80V1)) {
+		if (bRawDown) {
 			bShift = true;
 			bUpArrow = true;
 		}
-		if (IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_LEFT)) {
+		if (bRawLeft) {
 			bShift = true;
 			bRightArrow = true;
 		}
 	}
 
-	SetKeyMatrixByScancode(0x00, 0, pabKeyboardState, nScancodeCount, SDL_SCANCODE_KP_0);
-	SetKeyMatrixByScancode(0x00, 1, pabKeyboardState, nScancodeCount, SDL_SCANCODE_KP_1);
-	SetKeyMatrixByScancode(0x00, 2, pabKeyboardState, nScancodeCount, SDL_SCANCODE_KP_2);
-	SetKeyMatrixByScancode(0x00, 3, pabKeyboardState, nScancodeCount, SDL_SCANCODE_KP_3);
-	SetKeyMatrixByScancode(0x00, 4, pabKeyboardState, nScancodeCount, SDL_SCANCODE_KP_4);
-	SetKeyMatrixByScancode(0x00, 5, pabKeyboardState, nScancodeCount, SDL_SCANCODE_KP_5);
-	SetKeyMatrixByScancode(0x00, 6, pabKeyboardState, nScancodeCount, SDL_SCANCODE_KP_6);
-	SetKeyMatrixByScancode(0x00, 7, pabKeyboardState, nScancodeCount, SDL_SCANCODE_KP_7);
-	SetKeyMatrixByScancode(0x01, 0, pabKeyboardState, nScancodeCount, SDL_SCANCODE_KP_8);
-	SetKeyMatrixByScancode(0x01, 1, pabKeyboardState, nScancodeCount, SDL_SCANCODE_KP_9);
+	bool bNumKP = g_bNumberRowAsKeypad;
+	auto KP = [&](SDL_Scancode kp, bool bExtra) {
+		return IsScancodePressed(pabKeyboardState, nScancodeCount, kp) || bExtra;
+	};
+	bool bKp0 = KP(SDL_SCANCODE_KP_0, bNumKP && IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_0));
+	bool bKp1 = KP(SDL_SCANCODE_KP_1, bNumKP && IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_1));
+	bool bKp2 = KP(SDL_SCANCODE_KP_2, (bNumKP && IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_2)) || (bArrowKP && bRawDown));
+	bool bKp3 = KP(SDL_SCANCODE_KP_3, bNumKP && IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_3));
+	bool bKp4 = KP(SDL_SCANCODE_KP_4, (bNumKP && IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_4)) || (bArrowKP && bRawLeft));
+	bool bKp5 = KP(SDL_SCANCODE_KP_5, bNumKP && IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_5));
+	bool bKp6 = KP(SDL_SCANCODE_KP_6, (bNumKP && IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_6)) || (bArrowKP && bRawRight));
+	bool bKp7 = KP(SDL_SCANCODE_KP_7, bNumKP && IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_7));
+	bool bKp8 = KP(SDL_SCANCODE_KP_8, (bNumKP && IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_8)) || (bArrowKP && bRawUp));
+	bool bKp9 = KP(SDL_SCANCODE_KP_9, bNumKP && IsScancodePressed(pabKeyboardState, nScancodeCount, SDL_SCANCODE_9));
+
+	CPC88::Z80Main().SetKeyMatrics(0x00, 0, bKp0);
+	CPC88::Z80Main().SetKeyMatrics(0x00, 1, bKp1);
+	CPC88::Z80Main().SetKeyMatrics(0x00, 2, bKp2);
+	CPC88::Z80Main().SetKeyMatrics(0x00, 3, bKp3);
+	CPC88::Z80Main().SetKeyMatrics(0x00, 4, bKp4);
+	CPC88::Z80Main().SetKeyMatrics(0x00, 5, bKp5);
+	CPC88::Z80Main().SetKeyMatrics(0x00, 6, bKp6);
+	CPC88::Z80Main().SetKeyMatrics(0x00, 7, bKp7);
+	CPC88::Z80Main().SetKeyMatrics(0x01, 0, bKp8);
+	CPC88::Z80Main().SetKeyMatrics(0x01, 1, bKp9);
 	SetKeyMatrixByScancode(0x01, 2, pabKeyboardState, nScancodeCount, SDL_SCANCODE_KP_MULTIPLY);
 	SetKeyMatrixByScancode(0x01, 3, pabKeyboardState, nScancodeCount, SDL_SCANCODE_KP_PLUS);
 	SetKeyMatrixByScancode(0x01, 4, pabKeyboardState, nScancodeCount, SDL_SCANCODE_KP_EQUALS);
@@ -3289,16 +3338,19 @@ void UpdateKeyMatricsFromSDL()
 	SetKeyMatrixByScancode(0x05, 5, pabKeyboardState, nScancodeCount, SDL_SCANCODE_RIGHTBRACKET);
 	SetKeyMatrixByScancode(0x05, 6, pabKeyboardState, nScancodeCount, SDL_SCANCODE_EQUALS);
 	SetKeyMatrixByScancode(0x05, 7, pabKeyboardState, nScancodeCount, SDL_SCANCODE_MINUS);
-	SetKeyMatrixByScancode(0x06, 0, pabKeyboardState, nScancodeCount, SDL_SCANCODE_0);
-	SetKeyMatrixByScancode(0x06, 1, pabKeyboardState, nScancodeCount, SDL_SCANCODE_1);
-	SetKeyMatrixByScancode(0x06, 2, pabKeyboardState, nScancodeCount, SDL_SCANCODE_2);
-	SetKeyMatrixByScancode(0x06, 3, pabKeyboardState, nScancodeCount, SDL_SCANCODE_3);
-	SetKeyMatrixByScancode(0x06, 4, pabKeyboardState, nScancodeCount, SDL_SCANCODE_4);
-	SetKeyMatrixByScancode(0x06, 5, pabKeyboardState, nScancodeCount, SDL_SCANCODE_5);
-	SetKeyMatrixByScancode(0x06, 6, pabKeyboardState, nScancodeCount, SDL_SCANCODE_6);
-	SetKeyMatrixByScancode(0x06, 7, pabKeyboardState, nScancodeCount, SDL_SCANCODE_7);
-	SetKeyMatrixByScancode(0x07, 0, pabKeyboardState, nScancodeCount, SDL_SCANCODE_8);
-	SetKeyMatrixByScancode(0x07, 1, pabKeyboardState, nScancodeCount, SDL_SCANCODE_9);
+	auto NumRow = [&](SDL_Scancode sc) {
+		return (!bNumKP) && IsScancodePressed(pabKeyboardState, nScancodeCount, sc);
+	};
+	CPC88::Z80Main().SetKeyMatrics(0x06, 0, NumRow(SDL_SCANCODE_0));
+	CPC88::Z80Main().SetKeyMatrics(0x06, 1, NumRow(SDL_SCANCODE_1));
+	CPC88::Z80Main().SetKeyMatrics(0x06, 2, NumRow(SDL_SCANCODE_2));
+	CPC88::Z80Main().SetKeyMatrics(0x06, 3, NumRow(SDL_SCANCODE_3));
+	CPC88::Z80Main().SetKeyMatrics(0x06, 4, NumRow(SDL_SCANCODE_4));
+	CPC88::Z80Main().SetKeyMatrics(0x06, 5, NumRow(SDL_SCANCODE_5));
+	CPC88::Z80Main().SetKeyMatrics(0x06, 6, NumRow(SDL_SCANCODE_6));
+	CPC88::Z80Main().SetKeyMatrics(0x06, 7, NumRow(SDL_SCANCODE_7));
+	CPC88::Z80Main().SetKeyMatrics(0x07, 0, NumRow(SDL_SCANCODE_8));
+	CPC88::Z80Main().SetKeyMatrics(0x07, 1, NumRow(SDL_SCANCODE_9));
 	SetKeyMatrixByScancode(0x07, 2, pabKeyboardState, nScancodeCount, SDL_SCANCODE_APOSTROPHE);
 	SetKeyMatrixByScancode(0x07, 3, pabKeyboardState, nScancodeCount, SDL_SCANCODE_SEMICOLON);
 	SetKeyMatrixByScancode(0x07, 4, pabKeyboardState, nScancodeCount, SDL_SCANCODE_COMMA);
@@ -3351,8 +3403,8 @@ void UpdateKeyMatricsFromSDL()
 	SetKeyMatrixByScancode(0x09, 6, pabKeyboardState, nScancodeCount, SDL_SCANCODE_SPACE);
 	SetKeyMatrixByScancode(0x09, 7, pabKeyboardState, nScancodeCount, SDL_SCANCODE_ESCAPE);
 	SetKeyMatrixByScancode(0x0A, 0, pabKeyboardState, nScancodeCount, SDL_SCANCODE_TAB);
-	SetKeyMatrixByScancode(0x0A, 1, pabKeyboardState, nScancodeCount, SDL_SCANCODE_DOWN);
-	SetKeyMatrixByScancode(0x0A, 2, pabKeyboardState, nScancodeCount, SDL_SCANCODE_LEFT);
+	CPC88::Z80Main().SetKeyMatrics(0x0A, 1, bDownArrow);
+	CPC88::Z80Main().SetKeyMatrics(0x0A, 2, bLeftArrow);
 	SetKeyMatrixByScancode(0x0A, 3, pabKeyboardState, nScancodeCount, SDL_SCANCODE_END);
 	SetKeyMatrixByScancode(0x0A, 4, pabKeyboardState, nScancodeCount, SDL_SCANCODE_PRINTSCREEN);
 	SetKeyMatrixByScancode(0x0A, 5, pabKeyboardState, nScancodeCount, SDL_SCANCODE_KP_MINUS);
