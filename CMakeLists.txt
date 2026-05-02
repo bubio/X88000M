@@ -23,7 +23,7 @@ set(X88000_IMGUI_DIR "${X88000_THIRD_PARTY_DIR}/imgui")
 
 option(X88000M_FETCH_SDL3 "Fetch SDL3 from upstream instead of using pkg-config" ${X88000M_DEFAULT_FETCH_SDL3})
 option(X88000M_FETCH_IMGUI "Fetch Dear ImGui from upstream when third_party/imgui is unavailable" ON)
-set(X88000M_SDL3_GIT_TAG "release-3.4.4" CACHE STRING "SDL3 git tag used by FetchContent")
+set(X88000M_SDL3_GIT_TAG "release-3.4.8" CACHE STRING "SDL3 git tag used by FetchContent")
 set(X88000M_IMGUI_GIT_TAG "docking" CACHE STRING "Dear ImGui git tag used by FetchContent (docking branch)")
 
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
