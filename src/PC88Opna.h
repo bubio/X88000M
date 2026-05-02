@@ -245,6 +245,12 @@ protected:
 	// value enables it; we don't distinguish between the three sub-modes
 	// because they only differ in trigger semantics on real hardware).
 	static bool m_bFmCh3SpecialMode;
+	// CSM (CH3 mode 2) auto-key state. Each Timer A overflow flips
+	// this; on a 0->1 edge we trigger an ATTACK on all CH3 operators,
+	// on a 1->0 edge we trigger a RELEASE. The result is an
+	// ATTACK/RELEASE oscillation at half the Timer A frequency, which
+	// is the formant-modulation behaviour CSM-using titles depend on.
+	static bool m_bCsmKeyState;
 
 	// F-Number high latch. The YM2203 implements F-Num/Block as two
 	// register groups: $A4-$A6 (BLOCK + FNUM[10:8]) and $A0-$A2
@@ -446,6 +452,9 @@ protected:
 	static void OnFmRegisterWrite(int nAddress, uint8_t btData);
 	// Handle a write to register $28 (key on/off mask + channel index).
 	static void OnFmKeyOnOff(uint8_t btData);
+	// CSM trigger: forced key-on edge on all 4 operators of CH3,
+	// invoked from Timer A overflow when CH3 mode == 2 (CSM).
+	static void OnCsmKeyTrigger();
 	// Map an address in $30–$9E to (channel, op_index_0_based) using
 	// the YM-family 1-3-2-4 slot order. Returns false if the address
 	// targets the unused slot column (channel 3 / op4 of an absent

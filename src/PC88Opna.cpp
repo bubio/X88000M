@@ -142,6 +142,7 @@ int      CPC88Opna::m_anSsgEnvTable[CPC88Opna::SSG_ENV_TABLE_SIZE];
 
 CPC88Opna::SFmChannel CPC88Opna::m_aFmCh[CPC88Opna::FM_CHANNEL_COUNT];
 bool                  CPC88Opna::m_bFmCh3SpecialMode;
+bool                  CPC88Opna::m_bCsmKeyState;
 uint8_t               CPC88Opna::m_abtFmFnumLatch[CPC88Opna::FM_CHANNEL_COUNT];
 uint8_t               CPC88Opna::m_abtFmCh3FnumLatch[3];
 int                   CPC88Opna::m_nFmTicksPerSampleX16;
@@ -318,6 +319,13 @@ void CPC88Opna::TimerAOverFlow() {
 		}
 		m_btStatus |= 0x01;
 	}
+	// CH3 special mode 2 = CSM: every Timer A overflow forces a
+	// key-on retrigger on all four operators of CH3 regardless of
+	// their current $28 key state. This is what drives speech-style
+	// formant synthesis (Sorcerian opening, Xanadu II demo, etc.).
+	if (m_nCh3Mode == 2) {
+		OnCsmKeyTrigger();
+	}
 	do {
 		m_nTimerACounter += m_nTimerACounterMax;
 	} while (m_nTimerACounter <= 0);
@@ -483,7 +491,16 @@ void CPC88Opna::WriteData(uint8_t btData) {
 		if ((btData & 0x20) != 0) {
 			m_btStatus &= 0xFD;
 		}
-		m_nCh3Mode = (btData >> 6) & 0x03;
+		{
+			int nNewMode = (btData >> 6) & 0x03;
+			if (nNewMode != 2) {
+				// Leaving CSM resets the auto-key flip-flop so that
+				// the next entry into CSM starts deterministically
+				// from key-off (first overflow becomes a key-on).
+				m_bCsmKeyState = false;
+			}
+			m_nCh3Mode = nNewMode;
+		}
 		// Phase C-FM: bit 6/7 of $27 enables CH3 special mode (any
 		// non-zero value). The three sub-modes only differ in the
 		// retrigger semantics on real hardware; for synthesis we just
@@ -1108,6 +1125,7 @@ void CPC88Opna::ResetFmState() {
 		}
 	}
 	m_bFmCh3SpecialMode = false;
+	m_bCsmKeyState = false;
 	for (int n = 0; n < FM_CHANNEL_COUNT; n++) m_abtFmFnumLatch[n] = 0;
 	for (int n = 0; n < 3; n++) m_abtFmCh3FnumLatch[n] = 0;
 }
@@ -1449,6 +1467,52 @@ void CPC88Opna::OnFmKeyOnOff(uint8_t btData) {
 				op.bSsgEgInverted = false;
 			}
 			op.nEnvState = FM_ENV_RELEASE;
+		}
+	}
+}
+
+// CSM (CH3 mode 2) auto key trigger from Timer A overflow.
+//
+// Per the YM2203/YM2608 spec (and verified against the reference
+// write-up at mydocuments.g2.xrea.com/html/p8/csm_voice.html):
+//   "Timer-A のオーバーフロー毎に ch.3 の 4 オペレータが
+//    自動的に一括キーオンされる"
+// CSM is **key-on only**, no automatic key-off. Formant shaping is
+// the responsibility of software, which rewrites TL/F-Number on the
+// Timer A interrupt; the chip just retriggers the envelope to
+// ATTACK every overflow.
+//
+// Implementation: emulate a key-on edge on all 4 operators of CH3
+// without touching env_level (so the envelope ramps from wherever
+// it currently is — same as a regular $28 key-on). Resetting
+// env_level to 1023 was the previous attempt and produced an
+// over-emphasised, high-frequency tinge because every pulse forced
+// a full silent->peak attack burst.
+// The operator's bKeyOn flag (driven by $28) is intentionally not
+// touched; a software-issued $28 key-off still latches cleanly via
+// the next OnFmKeyOnOff call.
+
+void CPC88Opna::OnCsmKeyTrigger() {
+	if (FM_CHANNEL_COUNT <= 2) {
+		return;
+	}
+	m_bCsmKeyState = true;
+	SFmChannel& ch = m_aFmCh[2];
+	for (int nOp = 0; nOp < FM_OP_PER_CHANNEL; nOp++) {
+		SFmOperator& op = ch.aOp[nOp];
+		op.nEnvState   = FM_ENV_ATTACK;
+		op.nEnvCounter = 0;
+		// Reset phase on every CSM trigger so all 4 sinusoids
+		// re-align at the Timer A period boundary. This is what
+		// produces the regularly-spaced harmonic ladder that
+		// reference implementations show in the spectrogram —
+		// without phase reset, the four oscillators drift freely
+		// and the formant pattern smears out.
+		op.nPhase = 0;
+		if (op.btSsgEg & 0x08) {
+			op.bSsgEgInverted = (op.btSsgEg & 0x04) != 0;
+		} else {
+			op.bSsgEgInverted = false;
 		}
 	}
 }
