@@ -43,7 +43,7 @@
 
 namespace {
 
-// Resolve the path to NotoSansJP-Regular.ttf.
+// Resolve the path to NotoSansJP-SemiBold.ttf.
 // macOS: <BasePath>/../Resources/fonts/
 // Windows/Linux: <BasePath>/fonts/
 std::string ResolveFontPath()
@@ -53,9 +53,9 @@ std::string ResolveFontPath()
 
 	std::string sBase(pBase);
 #ifdef __APPLE__
-	std::string sPath = sBase + "../Resources/fonts/NotoSansJP-Regular.ttf";
+	std::string sPath = sBase + "../Resources/fonts/NotoSansJP-SemiBold.ttf";
 #else
-	std::string sPath = sBase + "fonts/NotoSansJP-Regular.ttf";
+	std::string sPath = sBase + "fonts/NotoSansJP-SemiBold.ttf";
 #endif
 	FILE* fpt = fopen(sPath.c_str(), "rb");
 	if (fpt) { fclose(fpt); return sPath; }
@@ -371,6 +371,8 @@ bool DrawEnvSettingsWindow(bool& bShow, SEnvSettingsView& view, CSdl3Settings& s
 	}
 	bool bRequestReset = false;
 	ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_FirstUseEver);
+	ImVec2 vCenter = ImGui::GetMainViewport()->GetCenter();
+	ImGui::SetNextWindowPos(vCenter, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
 	if (ImGui::Begin("Environment", &bShow, ImGuiWindowFlags_NoCollapse)) {
 		ImGui::TextUnformatted("Settings shared with X88000.ini [option] section.");
 		ImGui::Separator();
@@ -470,7 +472,7 @@ bool DrawEnvSettingsWindow(bool& bShow, SEnvSettingsView& view, CSdl3Settings& s
 			}
 		}
 
-		if (ImGui::CollapsingHeader("Display")) {
+		if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
 			int nFrameRate = view.nFrameRate;
 			if (ImGui::SliderInt("Frame rate", &nFrameRate, 1, 60)) {
 				if (nFrameRate != view.nFrameRate) {
@@ -531,6 +533,8 @@ void DrawDiskImageManagerWindow(bool& bShow, SDL_Window* pWindow)
 		return;
 	}
 	ImGui::SetNextWindowSize(ImVec2(560, 400), ImGuiCond_FirstUseEver);
+	ImVec2 vCenter = ImGui::GetMainViewport()->GetCenter();
+	ImGui::SetNextWindowPos(vCenter, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
 	if (ImGui::Begin("Disk Image Manager", &bShow, ImGuiWindowFlags_NoCollapse)) {
 		// Drive status panel at the top — most important info.
 		if (ImGui::CollapsingHeader("Drives", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -659,6 +663,8 @@ void DrawTapeImageManagerWindow(bool& bShow, SDL_Window* pWindow)
 		return;
 	}
 	ImGui::SetNextWindowSize(ImVec2(440, 0), ImGuiCond_FirstUseEver);
+	ImVec2 vCenter = ImGui::GetMainViewport()->GetCenter();
+	ImGui::SetNextWindowPos(vCenter, ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
 	if (ImGui::Begin("Tape Image Manager", &bShow, ImGuiWindowFlags_NoCollapse)) {
 		CTapeImage& tapeLoad = CPC88::Usart().GetLoadTapeImage();
 
@@ -2446,17 +2452,17 @@ void ApplyTintStyle()
 	ImGuiStyle& style = ImGui::GetStyle();
 	style.Colors[ImGuiCol_Text]             = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
 	style.Colors[ImGuiCol_TextDisabled]     = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
-	style.Colors[ImGuiCol_TitleBg]          = ImVec4(tintDim.x, tintDim.y, tintDim.z, 0.2f);
-	style.Colors[ImGuiCol_TitleBgActive]    = ImVec4(tint.x, tint.y, tint.z, 0.4f);
-	style.Colors[ImGuiCol_Header]           = ImVec4(tint.x, tint.y, tint.z, 0.5f);
-	style.Colors[ImGuiCol_HeaderHovered]    = ImVec4(tint.x, tint.y, tint.z, 0.7f);
+	style.Colors[ImGuiCol_TitleBg]          = ImVec4(tintDim.x, tintDim.y, tintDim.z, 0.4f);
+	style.Colors[ImGuiCol_TitleBgActive]    = ImVec4(tint.x, tint.y, tint.z, 0.6f);
+	style.Colors[ImGuiCol_Header]           = ImVec4(tint.x, tint.y, tint.z, 0.7f);
+	style.Colors[ImGuiCol_HeaderHovered]    = ImVec4(tint.x, tint.y, tint.z, 0.9f);
 	style.Colors[ImGuiCol_HeaderActive]     = tint;
-	style.Colors[ImGuiCol_Button]           = ImVec4(tint.x, tint.y, tint.z, 0.5f);
-	style.Colors[ImGuiCol_ButtonHovered]    = ImVec4(tint.x, tint.y, tint.z, 0.7f);
+	style.Colors[ImGuiCol_Button]           = ImVec4(tint.x, tint.y, tint.z, 0.7f);
+	style.Colors[ImGuiCol_ButtonHovered]    = ImVec4(tint.x, tint.y, tint.z, 0.9f);
 	style.Colors[ImGuiCol_ButtonActive]     = tintBright;
-	style.Colors[ImGuiCol_FrameBg]          = ImVec4(tintDim.x, tintDim.y, tintDim.z, 0.5f);
-	style.Colors[ImGuiCol_FrameBgHovered]   = ImVec4(tint.x, tint.y, tint.z, 0.4f);
-	style.Colors[ImGuiCol_FrameBgActive]    = ImVec4(tint.x, tint.y, tint.z, 0.6f);
+	style.Colors[ImGuiCol_FrameBg]          = ImVec4(tintDim.x, tintDim.y, tintDim.z, 0.7f);
+	style.Colors[ImGuiCol_FrameBgHovered]   = ImVec4(tint.x, tint.y, tint.z, 0.6f);
+	style.Colors[ImGuiCol_FrameBgActive]    = ImVec4(tint.x, tint.y, tint.z, 0.8f);
 	style.Colors[ImGuiCol_CheckMark]        = tintBright;
 	style.Colors[ImGuiCol_SliderGrab]       = tint;
 	style.Colors[ImGuiCol_SliderGrabActive] = tintBright;
@@ -4206,8 +4212,10 @@ int main(int argc, char** argv) {
 				ImGui::End();
 			}
 			// Save menu bar height before Render() finalizes the frame.
-			float fMenuBarH = ImGui::GetFrameHeight()
-				+ ImGui::GetStyle().FramePadding.y;
+			// MainMenuBar の高さは GetFrameHeight() そのもの。
+			// 余分に FramePadding を足すと、エミュ画面が非整数倍にスケール
+			// されてインターレースの黒ラインが中間色に潰れる。
+			float fMenuBarH = ImGui::GetFrameHeight();
 			static bool     s_bPanelLeft = ParseBoolEntry(
 				settings.GetSectionString(SECTION_OPTION, "sidepanel_left", "off"), false);
 #ifdef X88000_SDL3_HAS_CORE
