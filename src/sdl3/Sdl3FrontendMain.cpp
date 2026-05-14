@@ -59,6 +59,21 @@ std::string ResolveFontPath()
 #endif
 	FILE* fpt = fopen(sPath.c_str(), "rb");
 	if (fpt) { fclose(fpt); return sPath; }
+
+#if defined(__linux__) && !defined(__APPLE__)
+	// Fallback for Linux installation (using CMake defined installation path)
+#ifdef X88000_INSTALL_DATADIR
+	sPath = X88000_INSTALL_DATADIR "/fonts/NotoSansJP-SemiBold.ttf";
+	fpt = fopen(sPath.c_str(), "rb");
+	if (fpt) { fclose(fpt); return sPath; }
+#endif
+
+	// Fixed fallback for standard FHS location
+	sPath = "/usr/share/X88000M/fonts/NotoSansJP-SemiBold.ttf";
+	fpt = fopen(sPath.c_str(), "rb");
+	if (fpt) { fclose(fpt); return sPath; }
+#endif
+
 	return std::string();
 }
 

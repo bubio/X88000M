@@ -38,12 +38,20 @@ jobs:
         with:
           arch: ${{ matrix.msvc_arch }}
 
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-${{ matrix.arch }}-ccache
+          variant: sccache
+
       - name: Configure
         run: >
           cmake -S . -B build
           -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DX88000M_FETCH_SDL3=ON
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
 
       - name: Build
         run: cmake --build build --target X88000M --parallel

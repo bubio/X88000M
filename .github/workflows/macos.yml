@@ -27,11 +27,21 @@ jobs:
         with:
           xcode-version: "26.4.1"
 
+      - name: Install dependencies
+        run: brew install ccache
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-ccache
+
       - name: Configure
         run: |
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DX88000M_FETCH_SDL3=ON
+            -DX88000M_FETCH_SDL3=ON \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache
 
       - name: Build
         run: cmake --build build --target X88000M --parallel

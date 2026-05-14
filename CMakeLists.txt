@@ -153,7 +153,7 @@ target_link_libraries(X88000M PRIVATE ${X88000M_SDL3_LINK_TARGET} x88core)
 target_compile_definitions(X88000M PRIVATE
 	X88000_SDL3_HAS_CORE=1
 	X88000_SDL3_HAS_IMGUI=1
-	X88000M_VERSION="1.0.4"
+	X88000M_VERSION="1.0.5"
 	SDL_MAIN_HANDLED=1)
 target_include_directories(X88000M PRIVATE
 	"${X88000_SRC_DIR}"
@@ -194,8 +194,8 @@ if(APPLE)
 		MACOSX_BUNDLE_BUNDLE_VERSION "6"
 		MACOSX_BUNDLE_COPYRIGHT "Original X88000 by Manuke; repository maintenance by bubio"
 		MACOSX_BUNDLE_GUI_IDENTIFIER "com.github.bubio.x88000m"
-		MACOSX_BUNDLE_LONG_VERSION_STRING "X88000M 1.0.4(6)"
-		MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.4"
+		MACOSX_BUNDLE_LONG_VERSION_STRING "X88000M 1.0.5(7)"
+		MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.5"
 		MACOSX_BUNDLE_ICON_FILE "AppIcon")
 elseif(WIN32)
 	# Copy font alongside the executable so it can be found at runtime.
@@ -206,3 +206,49 @@ elseif(WIN32)
 			${X88000_FONT_RESOURCES}
 			"$<TARGET_FILE_DIR:X88000M>/fonts/")
 endif()
+
+# Installation and CPack configuration
+include(GNUInstallDirs)
+
+if(UNIX AND NOT APPLE)
+	install(TARGETS X88000M RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+	install(FILES ${X88000_FONT_RESOURCES} DESTINATION ${CMAKE_INSTALL_DATADIR}/X88000M/fonts)
+
+	# Desktop file
+	set(X88000_DESKTOP_FILE "${CMAKE_BINARY_DIR}/X88000M.desktop")
+	file(WRITE "${X88000_DESKTOP_FILE}"
+		"[Desktop Entry]\n"
+		"Type=Application\n"
+		"Name=X88000M\n"
+		"Comment=PC-8801 Emulator\n"
+		"Exec=X88000M\n"
+		"Icon=X88000M\n"
+		"Categories=Game;Emulator;\n")
+	install(FILES "${X88000_DESKTOP_FILE}" DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+
+	# Icon (Using a more standard path, still 1024 for now but renamed appropriately)
+	install(FILES "${CMAKE_SOURCE_DIR}/docs/AppIcon.png"
+		DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/1024x1024/apps"
+		RENAME "X88000M.png")
+
+	# Define installation paths for the source code to use
+	target_compile_definitions(X88000M PRIVATE
+		X88000_INSTALL_DATADIR="${CMAKE_INSTALL_FULL_DATADIR}/X88000M")
+endif()
+
+set(CPACK_PACKAGE_NAME "X88000M")
+set(CPACK_PACKAGE_VENDOR "bubio")
+set(CPACK_PACKAGE_VERSION "1.0.5")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "PC-8801 Emulator")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+
+if(UNIX AND NOT APPLE)
+	set(CPACK_GENERATOR "DEB;RPM")
+	set(CPACK_DEBIAN_PACKAGE_MAINTAINER "bubio")
+	set(CPACK_DEBIAN_PACKAGE_SECTION "games")
+	set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+	set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+	set(CPACK_RPM_PACKAGE_AUTOREQ ON)
+endif()
+
+include(CPack)
