@@ -179,6 +179,8 @@ typedef HWND CX88WndHandle;
 
 // STL
 
+#include <stdarg.h>
+#include <stdio.h>
 #include <vector>
 #include <list>
 #include <deque>

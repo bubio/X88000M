@@ -8,8 +8,6 @@
 
 #include "StdHeader.h"
 
-#include <stdarg.h>
-
 #include "X88Utility.h"
 
 #if defined(X88_ENCODE_ICONV)
