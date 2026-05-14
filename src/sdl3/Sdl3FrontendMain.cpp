@@ -112,7 +112,8 @@ void DisableRendererVSync(SDL_Renderer* pRenderer, const char* pszRendererName)
 int GetFrameExecuteClock()
 {
 	const int nBaseClockMHz = CPC88::GetBaseClock();
-	return ((nBaseClockMHz > 0)? nBaseClockMHz: 4) * 1000000 / 60;
+	const int nFrameRate = CPC88::GetScreenFrameRate();
+	return ((nBaseClockMHz > 0)? nBaseClockMHz: 4) * 1000000 / ((nFrameRate > 0) ? nFrameRate : 60);
 }
 
 ////////////////////////////////////////////////////////////
@@ -283,6 +284,14 @@ void ApplyEnvSettingsFromIni(CSdl3Settings& settings)
 		settings.GetSectionString(SECTION_OPTION, "arrow_as_keypad", "off"), false);
 	g_bNumberRowAsKeypad = ParseBoolEntry(
 		settings.GetSectionString(SECTION_OPTION, "numrow_as_keypad", "off"), false);
+	// Frame rate
+	std::string strFrameRate = settings.GetSectionString(SECTION_OPTION, "framerate", "");
+	if (!strFrameRate.empty()) {
+		int nFrameRate = atoi(strFrameRate.c_str());
+		if (nFrameRate > 0) {
+			CPC88::SetScreenFrameRate(nFrameRate);
+		}
+	}
 }
 
 // Volatile mirror of env settings used by the ImGui window. These are
@@ -354,6 +363,7 @@ void LoadEnvSettingsView(SEnvSettingsView& view, CSdl3Settings& settings)
 	if (view.nFrameRate <= 0) {
 		view.nFrameRate = 20;
 	}
+	CPC88::SetScreenFrameRate(view.nFrameRate);
 	view.bLoaded = true;
 }
 
@@ -477,6 +487,7 @@ bool DrawEnvSettingsWindow(bool& bShow, SEnvSettingsView& view, CSdl3Settings& s
 			if (ImGui::SliderInt("Frame rate", &nFrameRate, 1, 60)) {
 				if (nFrameRate != view.nFrameRate) {
 					view.nFrameRate = nFrameRate;
+					CPC88::SetScreenFrameRate(nFrameRate);
 					char szBuf[16];
 					snprintf(szBuf, sizeof(szBuf), "%d", nFrameRate);
 					settings.SetSectionString(SECTION_OPTION, "framerate", szBuf);
@@ -3455,7 +3466,7 @@ int main(int argc, char** argv) {
 	SEnvSettingsView envView;
 	std::vector<uint32_t> vArgbBuffer;
 	const Uint64 nPerfFreq = SDL_GetPerformanceFrequency();
-	const Uint64 nFrameTicks = (nPerfFreq > 0)? (nPerfFreq / 60U): 0U;
+	Uint64 nFrameTicks = (nPerfFreq > 0) ? (nPerfFreq / 60U) : 0U;
 	char szMediaPath[1024];
 	szMediaPath[0] = '\0';
 	int nSelectedDrive = 0;
@@ -3471,6 +3482,8 @@ int main(int argc, char** argv) {
 		ApplyEnvSettingsFromIni(settings);
 		// Re-apply reset so the env-driven dip switches take effect.
 		CPC88::Reset();
+		// Recalculate ticks after ApplyEnvSettingsFromIni has set the real frame rate.
+		nFrameTicks = (nPerfFreq > 0) ? (nPerfFreq / (Uint64)CPC88::GetScreenFrameRate()) : 0U;
 		// Mount any media specified on the command line, then reset
 		// once more so the BIOS sees the disk during its boot poll.
 		bool bHadCliMedia = (argc > 1);
@@ -3792,7 +3805,7 @@ int main(int argc, char** argv) {
 				enum { EXEC_UNIT = 2 }; // ms, matches CX88000::EXECUTE_UNIT_TIME
 				enum { IME_WAIT = 200 }; // ms per character
 				int nClockPerUnit = CPC88::GetBaseClock() * 1000 * EXEC_UNIT;
-				int nUnitsPerFrame = (1000/60) / EXEC_UNIT; // ~8 units per frame
+				int nUnitsPerFrame = (1000/CPC88::GetScreenFrameRate()) / EXEC_UNIT;
 				for (int nUnit = 0; nUnit < nUnitsPerFrame && !g_queueIMEChar.empty(); nUnit++) {
 					CPC88::Z80Main().ClearKeyMatrics();
 					uint16_t wKey = g_queueIMEChar.front();
@@ -4583,8 +4596,10 @@ int main(int argc, char** argv) {
 		}
 #endif
 
+		nFrameTicks = (nPerfFreq > 0) ? (nPerfFreq / (Uint64)CPC88::GetScreenFrameRate()) : 0U;
+
 		if (!bBoostMode && nFrameTicks > 0) {
-			// Normal mode: run at 1x speed (60 FPS pacing)
+			// Normal mode: run at 1x speed
 			nNextFrameTick += nFrameTicks;
 			Uint64 nNow = SDL_GetPerformanceCounter();
 			if (nNow < nNextFrameTick) {

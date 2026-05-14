@@ -80,6 +80,10 @@ bool CPC88::m_bHighSpeedMode;
 
 int CPC88::m_nBaseClock;
 
+// screen frame-rate
+
+int CPC88::m_nScreenFrameRate = 60;
+
 // sub CPU disable
 
 bool CPC88::m_bSubSystemDisable;
@@ -377,6 +381,7 @@ void CPC88::Initialize() {
 	m_nBasicMode = CPC88Z80Main::BASICMODE_N88V2;
 	m_bHighSpeedMode = true;
 	m_nBaseClock = 4;
+	m_nScreenFrameRate = 60;
 	m_bSubSystemDisable = false;
 	m_bMultiOpCode = true;
 	m_bHiresolution = true;

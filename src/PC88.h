@@ -102,6 +102,8 @@ protected:
 	static bool m_bHighSpeedMode;
 	// base clock
 	static int m_nBaseClock;
+	// screen frame-rate
+	static int m_nScreenFrameRate;
 	// sub CPU disable
 	static bool m_bSubSystemDisable;
 	// execute multi OP code at once
@@ -251,6 +253,16 @@ public:
 	// set sub CPU disable
 	static void SetSubSystemDisable(bool bSubSystemDisable) {
 		m_bSubSystemDisable = bSubSystemDisable;
+	}
+	// get screen frame-rate
+	static int GetScreenFrameRate() {
+		return m_nScreenFrameRate;
+	}
+	// set screen frame-rate
+	static void SetScreenFrameRate(int nScreenFrameRate) {
+		if (nScreenFrameRate > 0) {
+			m_nScreenFrameRate = nScreenFrameRate;
+		}
 	}
 	// is sub CPU disable now
 	static bool IsSubSystemDisableNow() {

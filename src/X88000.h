@@ -402,14 +402,9 @@ public:
 	}
 	// set frame-rate
 	static void SetScreenFrameRate(int nScreenFrameRate) {
-		switch (nScreenFrameRate) {
-		case 20:
-		case 30:
-		case 40:
-		case 60:
+		if (nScreenFrameRate > 0) {
 			m_nScreenFrameRate = nScreenFrameRate;
 			m_nScreenUpdateElapse = 1000/m_nScreenFrameRate;
-			break;
 		}
 	}
 	// is interlace mode
