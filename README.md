@@ -68,12 +68,30 @@ X88000のLinux版からGTK 2.0依存を排除し、SDL3 + Dear ImGuiで構築し
 
 - Windows 10 以降
 - x64 または ARM64
-- 
+
+### Linux
+
+- Ubuntu 22.04 LTS 以降
+- x86_64
+- SDL3 の依存ライブラリ（alsa, pulseaudio, wayland, x11 等）
+
 ## Install
 
-[Releases](https://github.com/bubio/X88000M/releases)ページから最新版をダウンロードしてください。
+[Releases](https://github.com/bubio/X88000M/releases)ページから各 OS 用のパッケージをダウンロードしてください。
 
-> **注意**: このアプリはAppleによるノータリゼーション（公証）を受けていないため、初回起動時にGatekeeperによってブロックされる場合があります。以下のいずれかの方法で回避できます：
+### Linux でのインストール
+
+Ubuntu/Debian 系（`.deb`）:
+```bash
+sudo apt install ./X88000M-1.0.5-Linux.deb
+```
+
+Fedora/RHEL 系（`.rpm`）:
+```bash
+sudo dnf install ./X88000M-1.0.5-Linux.rpm
+```
+
+> **macOS での注意**: このアプリはAppleによるノータリゼーション（公証）を受けていないため、初回起動時にGatekeeperによってブロックされる場合があります。以下のいずれかの方法で回避できます：
 >
 > **方法1: ターミナルで隔離フラグを削除**
 > ```bash
@@ -93,6 +111,7 @@ X88000のLinux版からGTK 2.0依存を排除し、SDL3 + Dear ImGuiで構築し
 |---|---|
 | macOS | `~/Library/Application Support/X88000M/` |
 | Windows | `%APPDATA%\X88000M\` |
+| Linux | `~/.local/share/X88000M/` |
 
 端末から起動する場合はカレントディレクトリからも探します。必要に応じて `X88_ROM_DIR` 環境変数でも ROM ディレクトリを指定できます。
 
@@ -163,8 +182,29 @@ cmake --build build --target X88000M --parallel
 
 ```cmd
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+```cmd
 cmake --build build --config Release --target X88000M --parallel
 ```
+
+### Linux
+
+Ubuntu 22.04 以降:
+
+```sh
+# 依存ライブラリのインストール
+sudo apt install build-essential cmake ninja-build pkg-config \
+    libasound2-dev libpulse-dev libdbus-1-dev libudev-dev \
+    libx11-dev libxcursor-dev libxext-dev libxi-dev \
+    libxinerama-dev libxrandr-dev libxkbcommon-dev \
+    libwayland-dev libegl1-mesa-dev libgl1-mesa-dev libpipewire-0.3-dev \
+    libdecor-0-dev libxtst-dev libibus-1.0-dev libdrm-dev
+
+# ビルド
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target X88000M --parallel
+```
+
+`build/X88000M` が生成されます。
 
 ## 現在の注意点
 
