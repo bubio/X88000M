@@ -49,6 +49,9 @@ jobs:
             libgles2-mesa-dev \
             libpipewire-0.3-dev \
             libdecor-0-dev \
+            libxtst-dev \
+            libibus-1.0-dev \
+            libdrm-dev \
             rpm
 
       - name: Setup ccache
