@@ -429,6 +429,10 @@ bool DrawEnvSettingsWindow(bool& bShow, SEnvSettingsView& view, CSdl3Settings& s
 				if (nDriveCount != view.nDriveCount) {
 					view.nDriveCount = nDriveCount;
 					CPC88::Fdc().SetDriveCount(nDriveCount);
+					// Eject disks from drives that are now disabled.
+					for (int n = nDriveCount; n < CPC88Fdc::DRIVE_MAX; n++) {
+						EjectDiskImageFromDrive(n);
+					}
 					char szBuf[16];
 					snprintf(szBuf, sizeof(szBuf), "%d", nDriveCount);
 					settings.SetSectionString(SECTION_OPTION, "drives", szBuf);
@@ -575,7 +579,15 @@ void DrawDiskImageManagerWindow(bool& bShow, SDL_Window* pWindow)
 				ImGui::EndDisabled();
 				ImGui::PopID();
 			}
-			if (!g_astrDriveMediaPath[0].empty() || !g_astrDriveMediaPath[1].empty()) {
+
+			bool bAnyPath = false;
+			for (int n = 0; n < CPC88Fdc::DRIVE_MAX; n++) {
+				if (!g_astrDriveMediaPath[n].empty()) {
+					bAnyPath = true;
+					break;
+				}
+			}
+			if (bAnyPath) {
 				ImGui::TextDisabled("Source paths:");
 				for (int n = 0; n < CPC88Fdc::DRIVE_MAX; n++) {
 					if (!g_astrDriveMediaPath[n].empty()) {
@@ -2727,7 +2739,7 @@ int CloseDiskImageFile(uint8_t* pbtData)
 
 bool MountDiskImageByIndex(int nDrive, int nDiskImageIndex)
 {
-	if ((nDrive < 0) || (nDrive >= CPC88Fdc::DRIVE_MAX)) {
+	if ((nDrive < 0) || (nDrive >= CPC88::Fdc().GetDriveCount())) {
 		return false;
 	}
 	CDiskImage* pDiskImage = CPC88::GetDiskImageCollection().GetDiskImage(nDiskImageIndex);
@@ -2751,11 +2763,12 @@ void EjectDiskImageFromDrive(int nDrive)
 
 int ResolveDriveNo(int nDrive, bool bAllowAutoAssignDrive)
 {
-	if ((nDrive >= 0) && (nDrive < CPC88Fdc::DRIVE_MAX)) {
+	int nDriveCount = CPC88::Fdc().GetDriveCount();
+	if ((nDrive >= 0) && (nDrive < nDriveCount)) {
 		return nDrive;
 	}
 	if (bAllowAutoAssignDrive) {
-		for (int nDrive2 = 0; nDrive2 < CPC88Fdc::DRIVE_MAX; nDrive2++) {
+		for (int nDrive2 = 0; nDrive2 < nDriveCount; nDrive2++) {
 			if (!CPC88::Fdc().IsDriveReady(nDrive2)) {
 				return nDrive2;
 			}
@@ -2836,15 +2849,25 @@ bool AddMediaImage(
 		return false;
 	}
 	RecordDiskFile(fstrFileName, nBefore, nAdded);
-	if (!MountDiskImageByIndex(nDrive, nBefore)) {
+	int nMounted = 0;
+	for (int i = 0; i < nAdded; i++) {
+		int nTargetDrive = nDrive + i;
+		if (nTargetDrive >= CPC88::Fdc().GetDriveCount()) {
+			break;
+		}
+		if (MountDiskImageByIndex(nTargetDrive, nBefore + i)) {
+			g_astrDriveMediaPath[nTargetDrive] = fstrFileName;
+			nMounted++;
+		}
+	}
+	if (nMounted == 0) {
 		SetMediaStatus("Failed to mount parsed disk image: " + fstrFileName);
 		return false;
 	}
-	g_astrDriveMediaPath[nDrive] = fstrFileName;
-	if (nAdded > 1) {
+	if (nMounted > 1) {
 		SetMediaStatus(
-			"Inserted " + std::to_string(nAdded) + " images from D88 to drive " +
-			std::to_string(nDrive+1) + " (using image 1).");
+			"Inserted " + std::to_string(nMounted) + " images from D88 starting from drive " +
+			std::to_string(nDrive+1) + ".");
 	} else {
 		SetMediaStatus("Inserted disk image into drive " + std::to_string(nDrive+1) + ": " + fstrFileName);
 	}
