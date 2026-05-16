@@ -131,6 +131,10 @@ protected:
 
 	// Sample output callback (set by the frontend; may be NULL).
 	static SampleOutputCallback m_pSampleOutputCallback;
+	// Total generated output frames since Reset(). Used by the optional
+	// YM2203 register logger so replay tools can align writes to audio
+	// sample positions without depending on CPU timing details.
+	static long long m_nRenderedFrames;
 
 	// Per-section mute (Debug menu — Generate() still updates state).
 	static bool m_bFmMute;
@@ -469,7 +473,8 @@ protected:
 	// Advance one operator's envelope state machine by one sample.
 	// nKsr is the precomputed key-scaling rate offset (0..3) for this
 	// operator's current channel pitch.
-	static void AdvanceFmEnvelope(SFmOperator& op, int nKsr);
+	static void AdvanceFmEnvelope(SFmOperator& op, int nKsr,
+		int nAlgo, int nFb);
 	// SSG-EG endpoint handler. Called by AdvanceFmEnvelope when an
 	// operator's env_level reaches 1023 (silent end) while running
 	// the SUSTAIN phase. If SSG-EG is enabled on this operator, the
@@ -506,6 +511,12 @@ public:
 	static void WriteAddress(uint8_t btAddress);
 	// write data
 	static void WriteData(uint8_t btData);
+	// Optional diagnostic: write YM2203 register events as CSV when
+	// X88_OPN_LOG=/path/to/file.csv is set. Data writes are logged as
+	// "frame,D,address,data"; prescaler address-only writes ($2D-$2F)
+	// are logged as "frame,A,address,00" so a replay tool can reproduce
+	// the side effect.
+	static void LogRegisterEvent(char chEvent, int nAddress, int nData);
 };
 
 #endif // PC88Opna_DEFINED

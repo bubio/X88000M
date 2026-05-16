@@ -23,6 +23,7 @@ set(X88000_IMGUI_DIR "${X88000_THIRD_PARTY_DIR}/imgui")
 
 option(X88000M_FETCH_SDL3 "Fetch SDL3 from upstream instead of using pkg-config" ${X88000M_DEFAULT_FETCH_SDL3})
 option(X88000M_FETCH_IMGUI "Fetch Dear ImGui from upstream when third_party/imgui is unavailable" ON)
+option(X88000M_BUILD_TOOLS "Build command-line diagnostic tools" ON)
 set(X88000M_SDL3_GIT_TAG "release-3.4.8" CACHE STRING "SDL3 git tag used by FetchContent")
 set(X88000M_IMGUI_GIT_TAG "docking" CACHE STRING "Dear ImGui git tag used by FetchContent (docking branch)")
 
@@ -85,6 +86,17 @@ set_target_properties(x88core PROPERTIES
 	CXX_STANDARD 11
 	CXX_STANDARD_REQUIRED ON
 	CXX_EXTENSIONS OFF)
+
+if(X88000M_BUILD_TOOLS)
+	add_executable(opn_log_render
+		"${CMAKE_CURRENT_SOURCE_DIR}/tools/opn_log_render.cpp")
+	target_link_libraries(opn_log_render PRIVATE x88core)
+	target_include_directories(opn_log_render PRIVATE "${X88000_SRC_DIR}")
+	set_target_properties(opn_log_render PROPERTIES
+		CXX_STANDARD 11
+		CXX_STANDARD_REQUIRED ON
+		CXX_EXTENSIONS OFF)
+endif()
 
 set(X88000M_SDL3_LINK_TARGET "")
 if(NOT X88000M_FETCH_SDL3 AND X88000M_PKGCONFIG_READY)

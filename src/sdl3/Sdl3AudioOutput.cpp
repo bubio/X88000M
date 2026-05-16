@@ -17,13 +17,44 @@ int ClampInt(int n, int nMin, int nMax)
 	return n;
 }
 
-// Convert an integer 0..100 volume to a 0.0..1.0 linear gain.
-float VolumeToGain(int nVolume)
-{
-	if (nVolume <= 0) return 0.0f;
-	if (nVolume >= 100) return 1.0f;
-	return (float)nVolume / 100.0f;
-}
+	float ReadEnvFloat(const char* pszName, float fDefault,
+		float fMin, float fMax)
+	{
+		const char* psz = getenv(pszName);
+		if ((psz == NULL) || (*psz == '\0')) {
+			return fDefault;
+		}
+		float f = (float)atof(psz);
+		if ((f < fMin) || (f > fMax)) {
+			return fDefault;
+		}
+		return f;
+	}
+
+	float GetMasterVolumeMaxGain()
+	{
+		static int s_checked = 0;
+		static float s_gain = 2.0f;
+		if (!s_checked) {
+			s_checked = 1;
+			s_gain = ReadEnvFloat("X88_MASTER_VOLUME_MAX_GAIN", 2.0f,
+				0.1f, 8.0f);
+		}
+		return s_gain;
+	}
+
+	// Convert an integer 0..100 volume to a linear gain. The SDL frontend's
+	// old mapping made 100 == 1.0, which left X88000M noticeably quieter
+	// than Bubilator at maximum volume. Keep 50 around unity and let 100
+	// reach the calibrated max gain.
+	float VolumeToGain(int nVolume)
+	{
+		if (nVolume <= 0) return 0.0f;
+		float fGain = ((float)nVolume / 50.0f);
+		float fMaxGain = GetMasterVolumeMaxGain();
+		if (fGain > fMaxGain) return fMaxGain;
+		return fGain;
+	}
 
 } // namespace
 

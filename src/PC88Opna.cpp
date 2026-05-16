@@ -111,6 +111,7 @@ int CPC88Opna::m_nSampleAccumX256;
 // Sample output callback
 
 CPC88Opna::SampleOutputCallback CPC88Opna::m_pSampleOutputCallback;
+long long CPC88Opna::m_nRenderedFrames;
 bool CPC88Opna::m_bFmMute  = false;
 bool CPC88Opna::m_bSsgMute = false;
 bool CPC88Opna::m_abFmChMute[CPC88Opna::FM_CHANNEL_COUNT]   = { false, false, false };
@@ -200,6 +201,129 @@ static const short s_anFmDetuneMilliHz[CPC88Opna::FM_DT_BLOCKS]
 	  {0, 423, 846,1164},  {0, 423, 846,1164} },
 };
 
+static double ReadEnvDouble(const char* pszName, double dDefault,
+	double dMin, double dMax)
+{
+	const char* psz = getenv(pszName);
+	if ((psz == NULL) || (*psz == '\0')) {
+		return dDefault;
+	}
+	double d = atof(psz);
+	if ((d < dMin) || (d > dMax)) {
+		return dDefault;
+	}
+	return d;
+}
+
+static int ScaleSignedInt(int nValue, double dScale) {
+	double d = (double)nValue * dScale;
+	if (d >= 0.0) {
+		return (int)(d + 0.5);
+	}
+	return (int)(d - 0.5);
+}
+
+static double GetFmModScaleForAlgo(int nAlgo) {
+	static int s_checked = 0;
+	static double s_scale = 1.0;
+	static double s_algoScale[8] = {
+		1.0, 1.0, 0.95, 1.0, 1.0, 1.0, 1.0, 1.0
+	};
+	if (!s_checked) {
+		s_checked = 1;
+		s_scale = ReadEnvDouble("X88_FM_MOD_SCALE", 1.0, 0.05, 8.0);
+		char szName[32];
+		for (int n = 0; n < 8; n++) {
+			snprintf(szName, sizeof(szName), "X88_FM_MOD_SCALE_ALGO%d", n);
+			s_algoScale[n] = ReadEnvDouble(szName, s_algoScale[n],
+				0.05, 8.0);
+		}
+	}
+	if ((nAlgo < 0) || (nAlgo >= 8)) {
+		return s_scale;
+	}
+	return s_scale * s_algoScale[nAlgo];
+}
+
+static int ScaleFmModInput(int nModulation, int nAlgo) {
+	return ScaleSignedInt(nModulation, GetFmModScaleForAlgo(nAlgo));
+}
+
+static int ScaleFmFeedbackInput(int nFeedback) {
+	static int s_checked = 0;
+	static double s_scale = 1.0;
+	if (!s_checked) {
+		s_checked = 1;
+		s_scale = ReadEnvDouble("X88_FM_FB_SCALE", 1.0, 0.05, 8.0);
+	}
+	return ScaleSignedInt(nFeedback, s_scale);
+}
+
+static bool ReadEnvBool(const char* pszName, bool bDefault) {
+	const char* psz = getenv(pszName);
+	if ((psz == NULL) || (*psz == '\0')) {
+		return bDefault;
+	}
+	return (*psz != '0') && (*psz != 'n') && (*psz != 'N') &&
+		(*psz != 'f') && (*psz != 'F');
+}
+
+static bool ShouldResetFmPhaseOnKeyOn() {
+	static int s_checked = 0;
+	static bool s_enabled = true;
+	if (!s_checked) {
+		s_checked = 1;
+		s_enabled = ReadEnvBool("X88_FM_PHASE_RESET_ON_KEY", true);
+	}
+	return s_enabled;
+}
+
+static int ScaleFmEnvRateInc(int nInc, const char* pszEnvName,
+	double dDefault)
+{
+	double dScale = ReadEnvDouble(pszEnvName, dDefault, 0.000001, 16.0);
+	double d = (double)nInc * dScale;
+	if (d < 1.0) return 1;
+	return (int)(d + 0.5);
+}
+
+static double GetFmPercussiveDecayScale(int nAlgo, int nFb)
+{
+	if ((nAlgo == 4) && (nFb >= 7)) {
+		return ReadEnvDouble("X88_FM_PERC_DECAY_RATE_SCALE", 1.5,
+			0.000001, 16.0);
+	}
+	return 1.0;
+}
+
+static int ScaleAudioSample(int nSample, double dScale) {
+	double d = (double)nSample * dScale;
+	if (d >  2147483000.0) return  2147483000;
+	if (d < -2147483000.0) return -2147483000;
+	if (d >= 0.0) return (int)(d + 0.5);
+	return (int)(d - 0.5);
+}
+
+static double GetSsgMixScale() {
+	static int s_checked = 0;
+	static double s_scale = 1.0;
+	if (!s_checked) {
+		s_checked = 1;
+		s_scale = ReadEnvDouble("X88_SSG_MIX_SCALE", 1.0, 0.0, 4.0);
+	}
+	return s_scale;
+}
+
+static double GetFmMixScale() {
+	static int s_checked = 0;
+	static double s_scale = 1.6;
+	if (!s_checked) {
+		s_checked = 1;
+		s_scale = ReadEnvDouble("X88_FM_MIX_SCALE", 1.6, 0.0, 4.0);
+	}
+	return s_scale;
+}
+
 ////////////////////////////////////////////////////////////
 // create & destroy
 
@@ -270,6 +394,7 @@ void CPC88Opna::Reset() {
 	// dedicated runtime variable agree from the very first sample.
 	m_abtRegisters[0x07] = 0xFF;
 	m_nSampleAccumX256 = 0;
+	m_nRenderedFrames = 0;
 	// Recompute cycles-per-sample because m_nBaseClock may have changed.
 	if (m_nSampleRate > 0) {
 		SetSampleRate(m_nSampleRate);
@@ -418,12 +543,15 @@ void CPC88Opna::WriteAddress(uint8_t btAddress) {
 	m_nAddress = btAddress;
 	switch (m_nAddress) {
 	case 0x2D:
+		LogRegisterEvent('A', m_nAddress, 0);
 		SetPreScaler(6, 4);
 		break;
 	case 0x2E:
+		LogRegisterEvent('A', m_nAddress, 0);
 		SetPreScaler(3, 2);
 		break;
 	case 0x2F:
+		LogRegisterEvent('A', m_nAddress, 0);
 		SetPreScaler(2, 1);
 		break;
 	}
@@ -433,6 +561,7 @@ void CPC88Opna::WriteAddress(uint8_t btAddress) {
 
 void CPC88Opna::WriteData(uint8_t btData) {
 	g_nOpnTotalWrites++;
+	LogRegisterEvent('D', m_nAddress, btData);
 	// Phase C-準備: mirror every register write into the FM/SSG state
 	// area. The synthesis engine added in Phase C-SSG / Phase C-FM
 	// reads from this mirror.
@@ -559,22 +688,56 @@ void CPC88Opna::Generate(int nFrames) {
 			int nSsgSample = RenderSsgSample();
 			int nFmSample  = RenderFmSample();
 			int nSample    = 0;
-			// Mix SSG and FM with relative balance. Real PC-88 hardware
-			// outputs SSG at a lower level than FM; halving the SSG
-			// contribution here roughly matches the perceived balance.
-			// (The SSG peak is ~24000 vs FM ~12288 after the 14-bit
-			// op output >> 1 in RenderFmSample, so >> 1 on SSG brings
-			// both sections to a similar range.)
-			if (!m_bSsgMute) nSample += nSsgSample >> 1;
-			if (!m_bFmMute)  nSample += nFmSample;
+			// Mix SSG and FM with relative balance. Earlier revisions
+			// halved SSG here as a workaround for thin/short FM output.
+			// After the 2026-05 FM envelope/detune fixes, that makes SSG
+			// sit too far back, but FM was still too quiet relative to
+			// Bubilator/fmgen references. Keep SSG at unity and lift FM by
+			// default; environment knobs remain for quick A/B:
+			//   X88_SSG_MIX_SCALE=0.5 restores the old SSG half-level.
+			//   X88_FM_MIX_SCALE=1.0 restores the previous FM level.
+			if (!m_bSsgMute) {
+				nSample += ScaleAudioSample(nSsgSample, GetSsgMixScale());
+			}
+			if (!m_bFmMute) {
+				nSample += ScaleAudioSample(nFmSample, GetFmMixScale());
+			}
 			if (nSample >  32767) nSample =  32767;
 			if (nSample < -32768) nSample = -32768;
 			aBuf[n*2 + 0] = (int16_t)nSample;
 			aBuf[n*2 + 1] = (int16_t)nSample;
 		}
 		m_pSampleOutputCallback(aBuf, nThis);
+		m_nRenderedFrames += nThis;
 		nFrames -= nThis;
 	}
+}
+
+// optional YM2203 register event logger
+
+void CPC88Opna::LogRegisterEvent(char chEvent, int nAddress, int nData) {
+	static int s_checked = 0;
+	static FILE* s_file = NULL;
+	if (!s_checked) {
+		s_checked = 1;
+		const char* pszPath = getenv("X88_OPN_LOG");
+		if ((pszPath != NULL) && (*pszPath != '\0')) {
+			s_file = fopen(pszPath, "wb");
+			if (s_file != NULL) {
+				fprintf(s_file,
+					"# X88000M YM2203 register log\n"
+					"# columns: frame,event,address,data\n");
+			}
+		}
+	}
+	if (s_file == NULL) {
+		return;
+	}
+	fprintf(s_file, "%lld,%c,%02X,%02X\n",
+		m_nRenderedFrames,
+		chEvent,
+		nAddress & 0xFF,
+		nData & 0xFF);
 }
 
 ////////////////////////////////////////////////////////////
@@ -1053,6 +1216,46 @@ void CPC88Opna::BuildFmTables() {
 	// per-tick increment is therefore add / (1 << shift). We store the
 	// average in 16.16 fixed point so that the per-sample envelope
 	// update in Phase C-FM-2 just becomes a saturating addition.
+	double dEnvRateScale = ReadEnvDouble("X88_FM_ENV_RATE_SCALE", 1.0, 0.000001, 16.0);
+	double adEnvRateScaleByRate[FM_ENV_RATE_TABLE_SIZE];
+	for (int nRate = 0; nRate < FM_ENV_RATE_TABLE_SIZE; nRate++) {
+		// 2026-05 Scheme CH3 comparison:
+		// The previous global shift=13 approximation still made FM
+		// percussion decay too quickly. Black-box comparison against
+		// Scheme CH3 and YS Opening CH1 references showed the best broad
+		// fit with lower/mid effective rates at 0.20x and high rates at
+		// 0.12x. Environment overrides below remain available for further
+		// A/B testing; X88_FM_ENV_RATE_BANDS=0-63:1 restores the prior
+		// post-v1.0.2 shift=13 behavior.
+		adEnvRateScaleByRate[nRate] = (nRate <= 35)? 0.20: 0.12;
+	}
+	{
+		const char* pszBands = getenv("X88_FM_ENV_RATE_BANDS");
+		if ((pszBands != NULL) && (*pszBands != '\0')) {
+			char szBands[512];
+			strncpy(szBands, pszBands, sizeof(szBands) - 1);
+			szBands[sizeof(szBands) - 1] = '\0';
+			char* pszTok = strtok(szBands, ",");
+			while (pszTok != NULL) {
+				int nFirst = -1;
+				int nLast = -1;
+				double dScale = 1.0;
+				if (sscanf(pszTok, "%d-%d:%lf", &nFirst, &nLast, &dScale) == 3 ||
+					sscanf(pszTok, "%d:%lf", &nFirst, &dScale) == 2)
+				{
+					if (nLast < 0) nLast = nFirst;
+					if (nFirst < 0) nFirst = 0;
+					if (nLast >= FM_ENV_RATE_TABLE_SIZE) nLast = FM_ENV_RATE_TABLE_SIZE - 1;
+					if ((nFirst <= nLast) && (dScale > 0.0) && (dScale < 16.0)) {
+						for (int nRate = nFirst; nRate <= nLast; nRate++) {
+							adEnvRateScaleByRate[nRate] = dScale;
+						}
+					}
+				}
+				pszTok = strtok(NULL, ",");
+			}
+		}
+	}
 	for (int nRate = 0; nRate < FM_ENV_RATE_TABLE_SIZE; nRate++) {
 		if (nRate < 2) {
 			// Rates 0 and 1 are effectively zero (envelope frozen).
@@ -1071,7 +1274,9 @@ void CPC88Opna::BuildFmTables() {
 			int nAdd   = 4 + (nRate & 3);
 			if (nShift < 0) nShift = 0;
 			// (add << 16) >> shift = (add * 65536) / (1 << shift)
-			m_anFmEnvRateTable[nRate] = (nAdd << 16) >> nShift;
+			m_anFmEnvRateTable[nRate] =
+				(int)((double)((nAdd << 16) >> nShift) *
+					dEnvRateScale * adEnvRateScaleByRate[nRate] + 0.5);
 		}
 	}
 
@@ -1175,6 +1380,7 @@ void CPC88Opna::UpdateFmTickRate() {
 	//
 	// To stay inside int64 we factor master/8MHz as a 16.16 ratio:
 	long long nMasterRatioX16 = (nMaster << 16) / 8000000LL;  // 65536 @ 8 MHz
+	double dDtScale = ReadEnvDouble("X88_FM_DT_SCALE", 1.0, 0.0, 16.0);
 	for (int b = 0; b < FM_DT_BLOCKS; b++) {
 		for (int n = 0; n < FM_DT_NOTES; n++) {
 			for (int f = 0; f < FM_DT_FDS; f++) {
@@ -1189,7 +1395,8 @@ void CPC88Opna::UpdateFmTickRate() {
 				long long nNum = nMHz * nMasterRatioX16;
 				nNum <<= 20;
 				long long nDen = 1000LL * (long long)m_nSampleRate;
-				m_anFmDetunePhaseInc[b][n][f] = (int)(nNum / nDen);
+				m_anFmDetunePhaseInc[b][n][f] =
+					(int)((double)(nNum / nDen) * dDtScale + 0.5);
 			}
 		}
 	}
@@ -1248,6 +1455,28 @@ void CPC88Opna::RecomputeFmOperatorPhaseInc(int nChannel, int nOpIndex) {
 		if (nBlk > 7) nBlk = 7;
 		// Stored value is already in the 16.16 nIncX16 unit system.
 		long long nDtOfs = (long long)m_anFmDetunePhaseInc[nBlk][nNote][nFd];
+		if (ReadEnvBool("X88_FM_DT_APPLY_MUL", true)) {
+			// 2026-05 Scheme DeathWorld CH2 comparison: ALGO 4 patches
+			// with detuned high-MUL operators sounded too thin when DT
+			// was applied as a fixed Hz offset after MUL. YS Opening CH1
+			// then showed that the follow amount is worth exposing for
+			// A/B. DeathWorld still needs the full MUL-following behavior
+			// for the two-chain thickness, so that remains the default.
+			// Set X88_FM_DT_APPLY_MUL=0 or X88_FM_DT_MUL_WEIGHT=0 to test
+			// the older fixed-offset behaviour.
+			int nDtMul = op.btMul;
+			double dWeight = ReadEnvDouble("X88_FM_DT_MUL_WEIGHT", 1.0,
+				0.0, 1.0);
+			double dMulScale;
+			if (nDtMul == 0) {
+				dMulScale = 0.5;
+			} else {
+				dMulScale = (double)nDtMul;
+			}
+			double dAppliedScale = 1.0 + (dMulScale - 1.0) * dWeight;
+			nDtOfs = (long long)((double)nDtOfs * dAppliedScale +
+				((nDtOfs >= 0)? 0.5: -0.5));
+		}
 		if (bDtNeg) nDtOfs = -nDtOfs;
 		nIncX16 += nDtOfs;
 	}
@@ -1435,13 +1664,16 @@ void CPC88Opna::OnFmKeyOnOff(uint8_t btData) {
 		bool bKey = ((btData >> (4 + nOp)) & 1) != 0;
 		SFmOperator& op = ch.aOp[nOp];
 		if (bKey && !op.bKeyOn) {
-			// Key-on edge: transition to ATTACK and reset phase.
-			// (YM2203 actually does NOT reset phase on key-on, but
-			// for our simple implementation a reset gives a cleaner
-			// attack and is closer to what most game music expects.)
+			// Key-on edge: transition to ATTACK. Resetting phase on the
+			// edge keeps drum transients and parallel carriers coherent;
+			// X88_FM_PHASE_RESET_ON_KEY=0 restores the older free-running
+			// behavior for A/B checks.
 			op.bKeyOn = true;
 			op.nEnvState = FM_ENV_ATTACK;
 			op.nEnvCounter = 0;
+			if (ShouldResetFmPhaseOnKeyOn()) {
+				op.nPhase = 0;
+			}
 			// Don't reset env_level — letting it ramp from its
 			// current attenuation produces less "click" than jumping
 			// straight to 1023.
@@ -1564,7 +1796,8 @@ int CPC88Opna::ComputeFmKsr(int nChannel, int nOpIndex) {
 
 // advance an operator's envelope state machine by one output sample
 
-void CPC88Opna::AdvanceFmEnvelope(SFmOperator& op, int nKsr) {
+	void CPC88Opna::AdvanceFmEnvelope(SFmOperator& op, int nKsr,
+		int nAlgo, int nFb) {
 	int nRate = 0;
 	switch (op.nEnvState) {
 	case FM_ENV_ATTACK:
@@ -1593,12 +1826,21 @@ void CPC88Opna::AdvanceFmEnvelope(SFmOperator& op, int nKsr) {
 		}
 		break;
 	case FM_ENV_DECAY:
-		// DR=0 → envelope stops (true "no decay"). KSR alone must not
-		// drive the rate.
-		if (op.btDr == 0) return;
-		nRate = op.btDr * 2 + nKsr;
-		if (nRate > 63) nRate = 63;
-		op.nEnvCounter += m_anFmEnvRateTable[nRate];
+		{
+			// DR=0 → envelope stops (true "no decay"). KSR alone must not
+			// drive the rate.
+			if (op.btDr == 0) return;
+			nRate = op.btDr * 2 + nKsr;
+			if (nRate > 63) nRate = 63;
+			int nDecayInc = ScaleFmEnvRateInc(
+				m_anFmEnvRateTable[nRate],
+				"X88_FM_DECAY_RATE_SCALE",
+				1.0);
+			nDecayInc = ScaleSignedInt(nDecayInc,
+				GetFmPercussiveDecayScale(nAlgo, nFb));
+			if (nDecayInc < 1) nDecayInc = 1;
+			op.nEnvCounter += nDecayInc;
+		}
 		while (op.nEnvCounter >= (1 << 16)) {
 			op.nEnvCounter -= (1 << 16);
 			op.nEnvLevel++;
@@ -1624,10 +1866,13 @@ void CPC88Opna::AdvanceFmEnvelope(SFmOperator& op, int nKsr) {
 		// idiom (long held note). Without this check, KSR keeps the
 		// envelope crawling toward silence and high notes die out
 		// audibly faster than low notes.
-		if (op.btSr == 0) return;
-		nRate = op.btSr * 2 + nKsr;
-		if (nRate > 63) nRate = 63;
-		op.nEnvCounter += m_anFmEnvRateTable[nRate];
+			if (op.btSr == 0) return;
+			nRate = op.btSr * 2 + nKsr;
+			if (nRate > 63) nRate = 63;
+			op.nEnvCounter += ScaleFmEnvRateInc(
+				m_anFmEnvRateTable[nRate],
+				"X88_FM_SUSTAIN_RATE_SCALE",
+				1.0);
 		while (op.nEnvCounter >= (1 << 16)) {
 			op.nEnvCounter -= (1 << 16);
 			op.nEnvLevel++;
@@ -1893,7 +2138,8 @@ int CPC88Opna::RenderFmChannel(int nChannel) {
 
 	// Advance envelopes for all 4 operators of this channel.
 	for (int nOp = 0; nOp < FM_OP_PER_CHANNEL; nOp++) {
-		AdvanceFmEnvelope(ch.aOp[nOp], ComputeFmKsr(nChannel, nOp));
+		AdvanceFmEnvelope(ch.aOp[nOp], ComputeFmKsr(nChannel, nOp),
+			ch.btAlgo, ch.btFb);
 	}
 
 	// OP1 self-feedback: sum of the two most recent OP1 outputs,
@@ -1914,6 +2160,7 @@ int CPC88Opna::RenderFmChannel(int nChannel) {
 	if (ch.btFb > 0) {
 		int nSum = ch.anFeedback[0] + ch.anFeedback[1];
 		nFbMod = nSum >> (10 - ch.btFb);
+		nFbMod = ScaleFmFeedbackInput(nFbMod);
 	}
 
 	// Operator outputs in physical OP1..OP4 order.
@@ -1938,49 +2185,49 @@ int CPC88Opna::RenderFmChannel(int nChannel) {
 	switch (ch.btAlgo) {
 	case 0:
 		// OP1 → OP2 → OP3 → OP4 → out  (serial 4-op)
-		nOp2Out = RenderFmOperator(ch.aOp[1], nOp1Out >> 1);
-		nOp3Out = RenderFmOperator(ch.aOp[2], nOp2Out >> 1);
-		nOp4Out = RenderFmOperator(ch.aOp[3], nOp3Out >> 1);
+		nOp2Out = RenderFmOperator(ch.aOp[1], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo));
+		nOp3Out = RenderFmOperator(ch.aOp[2], ScaleFmModInput(nOp2Out >> 1, ch.btAlgo));
+		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput(nOp3Out >> 1, ch.btAlgo));
 		nMix = nOp4Out;
 		break;
 	case 1:
 		// (OP1 + OP2) → OP3 → OP4 → out  (parallel mods, serial out)
 		nOp2Out = RenderFmOperator(ch.aOp[1], 0);
-		nOp3Out = RenderFmOperator(ch.aOp[2], (nOp1Out + nOp2Out) >> 1);
-		nOp4Out = RenderFmOperator(ch.aOp[3], nOp3Out >> 1);
+		nOp3Out = RenderFmOperator(ch.aOp[2], ScaleFmModInput((nOp1Out + nOp2Out) >> 1, ch.btAlgo));
+		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput(nOp3Out >> 1, ch.btAlgo));
 		nMix = nOp4Out;
 		break;
 	case 2:
 		// (OP1 + (OP2 → OP3)) → OP4 → out
 		nOp2Out = RenderFmOperator(ch.aOp[1], 0);
-		nOp3Out = RenderFmOperator(ch.aOp[2], nOp2Out >> 1);
-		nOp4Out = RenderFmOperator(ch.aOp[3], (nOp1Out + nOp3Out) >> 1);
+		nOp3Out = RenderFmOperator(ch.aOp[2], ScaleFmModInput(nOp2Out >> 1, ch.btAlgo));
+		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput((nOp1Out + nOp3Out) >> 1, ch.btAlgo));
 		nMix = nOp4Out;
 		break;
 	case 3:
 		// ((OP1 → OP2) + OP3) → OP4 → out
-		nOp2Out = RenderFmOperator(ch.aOp[1], nOp1Out >> 1);
+		nOp2Out = RenderFmOperator(ch.aOp[1], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo));
 		nOp3Out = RenderFmOperator(ch.aOp[2], 0);
-		nOp4Out = RenderFmOperator(ch.aOp[3], (nOp2Out + nOp3Out) >> 1);
+		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput((nOp2Out + nOp3Out) >> 1, ch.btAlgo));
 		nMix = nOp4Out;
 		break;
 	case 4:
 		// (OP1 → OP2☆) + (OP3 → OP4☆)  (two 2-op chains, both heard)
-		nOp2Out = RenderFmOperator(ch.aOp[1], nOp1Out >> 1);
+		nOp2Out = RenderFmOperator(ch.aOp[1], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo));
 		nOp3Out = RenderFmOperator(ch.aOp[2], 0);
-		nOp4Out = RenderFmOperator(ch.aOp[3], nOp3Out >> 1);
+		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput(nOp3Out >> 1, ch.btAlgo));
 		nMix = nOp2Out + nOp4Out;
 		break;
 	case 5:
 		// OP1 → {OP2☆, OP3☆, OP4☆}  (1 modulator, 3 carriers)
-		nOp2Out = RenderFmOperator(ch.aOp[1], nOp1Out >> 1);
-		nOp3Out = RenderFmOperator(ch.aOp[2], nOp1Out >> 1);
-		nOp4Out = RenderFmOperator(ch.aOp[3], nOp1Out >> 1);
+		nOp2Out = RenderFmOperator(ch.aOp[1], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo));
+		nOp3Out = RenderFmOperator(ch.aOp[2], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo));
+		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo));
 		nMix = nOp2Out + nOp3Out + nOp4Out;
 		break;
 	case 6:
 		// (OP1 → OP2☆) + OP3☆ + OP4☆
-		nOp2Out = RenderFmOperator(ch.aOp[1], nOp1Out >> 1);
+		nOp2Out = RenderFmOperator(ch.aOp[1], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo));
 		nOp3Out = RenderFmOperator(ch.aOp[2], 0);
 		nOp4Out = RenderFmOperator(ch.aOp[3], 0);
 		nMix = nOp2Out + nOp3Out + nOp4Out;
