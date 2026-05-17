@@ -29,6 +29,12 @@ uint8_t CPC88Opna::m_btStatus;
 // address
 
 int CPC88Opna::m_nAddress;
+int CPC88Opna::m_anAddress[CPC88Opna::REGISTER_PAGE_COUNT];
+int CPC88Opna::m_nSoundBoard2Address;
+int CPC88Opna::m_nSoundBoard2AddressUpper;
+bool CPC88Opna::m_bSoundBoard2InterruptMask;
+int CPC88Opna::m_nWritePage;
+int CPC88Opna::m_nWriteChannelBase;
 
 // CH3 mode
 
@@ -95,6 +101,9 @@ CPC88Opna::IntVectChangeCallback CPC88Opna::m_pIntVectChangeCallback;
 // Mirror of all written register values
 
 uint8_t CPC88Opna::m_abtRegisters[CPC88Opna::REGISTER_COUNT];
+uint8_t CPC88Opna::m_abtSoundBoard2Registers[CPC88Opna::REGISTER_COUNT];
+int CPC88Opna::m_nSoundBoardMode = CPC88Opna::SOUNDBOARD_OPN;
+CPC88Opna::SystemFileOpenCallback CPC88Opna::m_pSystemFileOpenCallback;
 
 // Output sample rate
 
@@ -114,6 +123,9 @@ CPC88Opna::SampleOutputCallback CPC88Opna::m_pSampleOutputCallback;
 long long CPC88Opna::m_nRenderedFrames;
 bool CPC88Opna::m_bFmMute  = false;
 bool CPC88Opna::m_bSsgMute = false;
+bool CPC88Opna::m_bInternalOpnMute = false;
+bool CPC88Opna::m_bExpansionOpnaMute = false;
+bool CPC88Opna::m_bRhythmMute = false;
 bool CPC88Opna::m_abFmChMute[CPC88Opna::FM_CHANNEL_COUNT]   = { false, false, false };
 bool CPC88Opna::m_abSsgChMute[CPC88Opna::SSG_CHANNEL_COUNT] = { false, false, false };
 
@@ -145,7 +157,7 @@ CPC88Opna::SFmChannel CPC88Opna::m_aFmCh[CPC88Opna::FM_CHANNEL_COUNT];
 bool                  CPC88Opna::m_bFmCh3SpecialMode;
 bool                  CPC88Opna::m_bCsmKeyState;
 uint8_t               CPC88Opna::m_abtFmFnumLatch[CPC88Opna::FM_CHANNEL_COUNT];
-uint8_t               CPC88Opna::m_abtFmCh3FnumLatch[3];
+uint8_t               CPC88Opna::m_abtFmCh3FnumLatch[CPC88Opna::FM_CHANNEL_COUNT][3];
 int                   CPC88Opna::m_nFmTicksPerSampleX16;
 int                   CPC88Opna::m_nFmPhaseScaleX16;
 
@@ -159,6 +171,10 @@ int                   CPC88Opna::m_anFmSinTable[CPC88Opna::FM_SIN_TABLE_SIZE];
 int                   CPC88Opna::m_anFmExpTable[CPC88Opna::FM_EXP_TABLE_SIZE];
 int                   CPC88Opna::m_anFmEnvRateTable[CPC88Opna::FM_ENV_RATE_TABLE_SIZE];
 int                   CPC88Opna::m_anFmDetunePhaseInc[CPC88Opna::FM_DT_BLOCKS][CPC88Opna::FM_DT_NOTES][CPC88Opna::FM_DT_FDS];
+CPC88Opna::SRhythmSample CPC88Opna::m_aRhythmSample[CPC88Opna::RHYTHM_CHANNEL_COUNT];
+CPC88Opna::SRhythmVoice  CPC88Opna::m_aRhythmVoice[CPC88Opna::RHYTHM_CHANNEL_COUNT];
+bool CPC88Opna::m_bRhythmSamplesLoaded = false;
+uint8_t CPC88Opna::m_btRhythmTotalLevel = 0x3F;
 
 // Detune amounts in milli-Hz at master clock = 8 MHz, transcribed
 // from Table 2-6 of the YM2608 application manual. The arrows ("↑")
@@ -332,6 +348,7 @@ static double GetFmMixScale() {
 CPC88Opna::CPC88Opna() {
 	m_pIntVectChangeCallback = NULL;
 	m_pSampleOutputCallback = NULL;
+	m_pSystemFileOpenCallback = NULL;
 }
 
 // destructor
@@ -372,6 +389,14 @@ void CPC88Opna::Initialize() {
 void CPC88Opna::Reset() {
 	m_btStatus = 0;
 	m_nAddress = 0;
+	for (int n = 0; n < REGISTER_PAGE_COUNT; n++) {
+		m_anAddress[n] = 0;
+	}
+	m_nSoundBoard2Address = 0;
+	m_nSoundBoard2AddressUpper = 0;
+	m_bSoundBoard2InterruptMask = false;
+	m_nWritePage = 0;
+	m_nWriteChannelBase = INTERNAL_FM_CHANNEL_BASE;
 	m_nCh3Mode = 0;
 	m_nPreScalerFM = 6;
 	m_nPreScalerPSG = 4;
@@ -387,6 +412,7 @@ void CPC88Opna::Reset() {
 	// Phase C synthesis state.
 	for (int n = 0; n < REGISTER_COUNT; n++) {
 		m_abtRegisters[n] = 0;
+		m_abtSoundBoard2Registers[n] = 0;
 	}
 	// SSG mixer reset state per YM2149 datasheet: $07 = $FF
 	// (= every channel's tone and noise both disabled, I/O ports as
@@ -430,6 +456,15 @@ void CPC88Opna::Reset() {
 	// FM state reset (Phase C-FM).
 	ResetFmState();
 	UpdateFmTickRate();
+	LoadRhythmSamples();
+	for (int n = 0; n < RHYTHM_CHANNEL_COUNT; n++) {
+		m_aRhythmVoice[n].bActive = false;
+		m_aRhythmVoice[n].nPosX16 = 0;
+		m_aRhythmVoice[n].nStepX16 = 1 << 16;
+		m_aRhythmVoice[n].btLevel = 0x1F;
+		m_aRhythmVoice[n].btPan = 0xC0;
+	}
+	m_btRhythmTotalLevel = 0x3F;
 }
 
 ////////////////////////////////////////////////////////////
@@ -505,6 +540,15 @@ void CPC88Opna::SetPreScaler(int nPreScalerFM, int nPreScalerPSG) {
 // read data
 
 uint8_t CPC88Opna::ReadData() {
+	if (m_nSoundBoardMode == SOUNDBOARD_NONE) {
+		return 0xFF;
+	}
+	if ((m_nSoundBoardMode == SOUNDBOARD_OPNA) &&
+		((m_nAddress & 0xFF) == 0xFF))
+	{
+		// YM2608 lower-port register $FF is the device ID readback.
+		return 0x01;
+	}
 	// SSG registers $00–$0D are readable and return the last written
 	// value. $0E–$0F are I/O ports: when configured as input (bit 6/7
 	// of $07 = 0), reading returns the external port state; when
@@ -537,10 +581,34 @@ uint8_t CPC88Opna::ReadData() {
 	return 0xFF;
 }
 
+uint8_t CPC88Opna::ReadStatusUpper() {
+	if (m_nSoundBoardMode != SOUNDBOARD_OPNA) {
+		return 0xFF;
+	}
+	// STATUS1 includes the timer flags from STATUS0 plus ADPCM flags.
+	// ADPCM audio is intentionally not implemented in this pass, but
+	// Sound Board II drivers may still probe or initialize it and wait
+	// for BRDY/EOS. Report "ready + ended, not busy" so those wait
+	// loops make forward progress without producing ADPCM sound.
+	return (m_btStatus & 0x03) | 0x0C;
+}
+
+uint8_t CPC88Opna::ReadDataUpper() {
+	if (m_nSoundBoardMode != SOUNDBOARD_OPNA) {
+		return 0xFF;
+	}
+	int nAddress = m_anAddress[1] & 0xFF;
+	return m_abtRegisters[0x100 + nAddress];
+}
+
 // write address
 
 void CPC88Opna::WriteAddress(uint8_t btAddress) {
+	if (m_nSoundBoardMode == SOUNDBOARD_NONE) {
+		return;
+	}
 	m_nAddress = btAddress;
+	m_anAddress[0] = btAddress;
 	switch (m_nAddress) {
 	case 0x2D:
 		LogRegisterEvent('A', m_nAddress, 0);
@@ -557,30 +625,51 @@ void CPC88Opna::WriteAddress(uint8_t btAddress) {
 	}
 }
 
+void CPC88Opna::WriteAddressUpper(uint8_t btAddress) {
+	if (m_nSoundBoardMode != SOUNDBOARD_OPNA) {
+		return;
+	}
+	m_anAddress[1] = btAddress;
+}
+
 // write data
 
 void CPC88Opna::WriteData(uint8_t btData) {
+	if (m_nSoundBoardMode == SOUNDBOARD_NONE) {
+		return;
+	}
 	g_nOpnTotalWrites++;
 	LogRegisterEvent('D', m_nAddress, btData);
+	WriteLowerDataForTargets(btData,
+		(m_nSoundBoardMode == SOUNDBOARD_OPN ||
+		 m_nSoundBoardMode == SOUNDBOARD_OPN_OPNA),
+		(m_nSoundBoardMode == SOUNDBOARD_OPNA));
+}
+
+void CPC88Opna::WriteLowerDataForTargets(uint8_t btData,
+	bool bInternalOpn, bool bExpansionOpna)
+{
 	// Phase C-準備: mirror every register write into the FM/SSG state
 	// area. The synthesis engine added in Phase C-SSG / Phase C-FM
 	// reads from this mirror.
-	if ((m_nAddress >= 0) && (m_nAddress < REGISTER_COUNT)) {
+	if ((m_nAddress >= 0) && (m_nAddress < 0x100)) {
 		m_abtRegisters[m_nAddress] = btData;
 	}
 	// Phase C-SSG: SSG / PSG section is at $00–$0F.
-	if ((m_nAddress >= 0x00) && (m_nAddress <= 0x0F)) {
+	if ((bInternalOpn || bExpansionOpna) &&
+		(m_nAddress >= 0x00) && (m_nAddress <= 0x0F))
+	{
 		OnSsgRegisterWrite(m_nAddress, btData);
 	}
 	// Phase C-FM: $28 (key on/off) and $30–$B2 (FM operator/channel
 	// parameters). $22 (LFO) and $B4–$B6 (L/R/AMS/PMS) are OPNA-only
 	// and intentionally not handled.
-	if ((m_nAddress == 0x28) ||
-		((m_nAddress >= 0x30) && (m_nAddress <= 0x9E)) ||
-		((m_nAddress >= 0xA0) && (m_nAddress <= 0xAE)) ||
-		((m_nAddress >= 0xB0) && (m_nAddress <= 0xB2)))
-	{
-		OnFmRegisterWrite(m_nAddress, btData);
+	if (bInternalOpn) {
+		OnFmRegisterWriteAt(0, INTERNAL_FM_CHANNEL_BASE, m_nAddress, btData);
+	}
+	if (bExpansionOpna) {
+		OnFmRegisterWriteAt(0, EXPANSION_FM_CHANNEL_BASE, m_nAddress, btData);
+		OnRhythmRegisterWrite(m_nAddress, btData);
 	}
 	switch (m_nAddress) {
 	case 0x24:
@@ -639,6 +728,123 @@ void CPC88Opna::WriteData(uint8_t btData) {
 	}
 }
 
+void CPC88Opna::WriteDataUpper(uint8_t btData) {
+	if (m_nSoundBoardMode != SOUNDBOARD_OPNA) {
+		return;
+	}
+	int nAddress = m_anAddress[1] & 0xFF;
+	g_nOpnTotalWrites++;
+	LogRegisterEvent('E', nAddress, btData);
+	m_abtRegisters[0x100 + nAddress] = btData;
+	OnFmRegisterWriteAt(1, EXPANSION_FM_CHANNEL_BASE + 3, nAddress, btData);
+}
+
+uint8_t CPC88Opna::ReadStatusSoundBoard2() {
+	if (m_nSoundBoardMode != SOUNDBOARD_OPN_OPNA) {
+		return 0xFF;
+	}
+	return m_btStatus;
+}
+
+uint8_t CPC88Opna::ReadDataSoundBoard2() {
+	if (m_nSoundBoardMode != SOUNDBOARD_OPN_OPNA) {
+		return 0xFF;
+	}
+	int nAddress = m_nSoundBoard2Address & 0xFF;
+	if ((nAddress >= 0x00) && (nAddress <= 0x0D)) {
+		return m_abtSoundBoard2Registers[nAddress];
+	}
+	if (nAddress == 0x0E || nAddress == 0x0F) {
+		return 0xFF;
+	}
+	if (nAddress == 0xFF) {
+		// Sound Board II detection probes OPNA ID via A8=$FF, read A9.
+		return 0x01;
+	}
+	return 0x00;
+}
+
+void CPC88Opna::WriteAddressSoundBoard2(uint8_t btAddress) {
+	if (m_nSoundBoardMode != SOUNDBOARD_OPN_OPNA) {
+		return;
+	}
+	m_nSoundBoard2Address = btAddress;
+	switch (btAddress) {
+	case 0x2D:
+		LogRegisterEvent('A', btAddress, 0);
+		SetPreScaler(6, 4);
+		break;
+	case 0x2E:
+		LogRegisterEvent('A', btAddress, 0);
+		SetPreScaler(3, 2);
+		break;
+	case 0x2F:
+		LogRegisterEvent('A', btAddress, 0);
+		SetPreScaler(2, 1);
+		break;
+	}
+}
+
+void CPC88Opna::WriteDataSoundBoard2(uint8_t btData) {
+	if (m_nSoundBoardMode != SOUNDBOARD_OPN_OPNA) {
+		return;
+	}
+	int nAddressPrev = m_nAddress;
+	m_nAddress = m_nSoundBoard2Address & 0xFF;
+	g_nOpnTotalWrites++;
+	LogRegisterEvent('S', m_nAddress, btData);
+	m_abtSoundBoard2Registers[m_nAddress] = btData;
+	WriteLowerDataForTargets(btData, false, true);
+	m_nAddress = nAddressPrev;
+}
+
+uint8_t CPC88Opna::ReadStatusSoundBoard2Upper() {
+	if (m_nSoundBoardMode != SOUNDBOARD_OPN_OPNA) {
+		return 0xFF;
+	}
+	return (m_btStatus & 0x03) | 0x0C;
+}
+
+uint8_t CPC88Opna::ReadDataSoundBoard2Upper() {
+	if (m_nSoundBoardMode != SOUNDBOARD_OPN_OPNA) {
+		return 0xFF;
+	}
+	int nAddress = m_nSoundBoard2AddressUpper & 0xFF;
+	return m_abtSoundBoard2Registers[0x100 + nAddress];
+}
+
+void CPC88Opna::WriteAddressSoundBoard2Upper(uint8_t btAddress) {
+	if (m_nSoundBoardMode != SOUNDBOARD_OPN_OPNA) {
+		return;
+	}
+	m_nSoundBoard2AddressUpper = btAddress;
+}
+
+void CPC88Opna::WriteDataSoundBoard2Upper(uint8_t btData) {
+	if (m_nSoundBoardMode != SOUNDBOARD_OPN_OPNA) {
+		return;
+	}
+	int nAddress = m_nSoundBoard2AddressUpper & 0xFF;
+	g_nOpnTotalWrites++;
+	LogRegisterEvent('T', nAddress, btData);
+	m_abtSoundBoard2Registers[0x100 + nAddress] = btData;
+	m_abtRegisters[0x100 + nAddress] = btData;
+	OnFmRegisterWriteAt(1, EXPANSION_FM_CHANNEL_BASE + 3, nAddress, btData);
+}
+
+void CPC88Opna::WriteSoundBoard2InterruptMask(uint8_t btData) {
+	m_bSoundBoard2InterruptMask = ((btData & 0x01) != 0);
+	if (m_bSoundBoard2InterruptMask &&
+		(m_nSoundBoardMode == SOUNDBOARD_OPN_OPNA))
+	{
+		UpdateInterruptRequest(false);
+	} else if ((m_nSoundBoardMode == SOUNDBOARD_OPN_OPNA) &&
+		((m_btStatus & 0x03) != 0))
+	{
+		UpdateInterruptRequest(true);
+	}
+}
+
 ////////////////////////////////////////////////////////////
 // Phase C-準備: sample synthesis scaffolding
 
@@ -664,6 +870,13 @@ void CPC88Opna::SetSampleRate(int nSampleRate) {
 	UpdateFmTickRate();
 }
 
+void CPC88Opna::SetSoundBoardMode(int nMode) {
+	if ((nMode < SOUNDBOARD_NONE) || (nMode > SOUNDBOARD_OPN_OPNA)) {
+		nMode = SOUNDBOARD_OPN;
+	}
+	m_nSoundBoardMode = nMode;
+}
+
 // generate nFrames stereo samples and push them via the callback
 
 void CPC88Opna::Generate(int nFrames) {
@@ -686,8 +899,14 @@ void CPC88Opna::Generate(int nFrames) {
 			// accumulators stay consistent; only suppress the section's
 			// contribution to the output sample if muted.
 			int nSsgSample = RenderSsgSample();
-			int nFmSample  = RenderFmSample();
-			int nSample    = 0;
+			int nFmLeft = 0;
+			int nFmRight = 0;
+			RenderFmStereoSample(nFmLeft, nFmRight);
+			int nRhythmLeft = 0;
+			int nRhythmRight = 0;
+			RenderRhythmStereoSample(nRhythmLeft, nRhythmRight);
+			int nLeft = 0;
+			int nRight = 0;
 			// Mix SSG and FM with relative balance. Earlier revisions
 			// halved SSG here as a workaround for thin/short FM output.
 			// After the 2026-05 FM envelope/detune fixes, that makes SSG
@@ -697,15 +916,24 @@ void CPC88Opna::Generate(int nFrames) {
 			//   X88_SSG_MIX_SCALE=0.5 restores the old SSG half-level.
 			//   X88_FM_MIX_SCALE=1.0 restores the previous FM level.
 			if (!m_bSsgMute) {
-				nSample += ScaleAudioSample(nSsgSample, GetSsgMixScale());
+				int n = ScaleAudioSample(nSsgSample, GetSsgMixScale());
+				nLeft += n;
+				nRight += n;
 			}
 			if (!m_bFmMute) {
-				nSample += ScaleAudioSample(nFmSample, GetFmMixScale());
+				nLeft += ScaleAudioSample(nFmLeft, GetFmMixScale());
+				nRight += ScaleAudioSample(nFmRight, GetFmMixScale());
 			}
-			if (nSample >  32767) nSample =  32767;
-			if (nSample < -32768) nSample = -32768;
-			aBuf[n*2 + 0] = (int16_t)nSample;
-			aBuf[n*2 + 1] = (int16_t)nSample;
+			if (!m_bRhythmMute) {
+				nLeft += nRhythmLeft;
+				nRight += nRhythmRight;
+			}
+			if (nLeft >  32767) nLeft =  32767;
+			if (nLeft < -32768) nLeft = -32768;
+			if (nRight >  32767) nRight =  32767;
+			if (nRight < -32768) nRight = -32768;
+			aBuf[n*2 + 0] = (int16_t)nLeft;
+			aBuf[n*2 + 1] = (int16_t)nRight;
 		}
 		m_pSampleOutputCallback(aBuf, nThis);
 		m_nRenderedFrames += nThis;
@@ -1301,6 +1529,7 @@ void CPC88Opna::ResetFmState() {
 		ch.btBlock = 0;
 		ch.btAlgo  = 0;
 		ch.btFb    = 0;
+		ch.btPan   = 0xC0;
 		ch.anFeedback[0] = 0;
 		ch.anFeedback[1] = 0;
 		for (int n = 0; n < 3; n++) {
@@ -1332,7 +1561,9 @@ void CPC88Opna::ResetFmState() {
 	m_bFmCh3SpecialMode = false;
 	m_bCsmKeyState = false;
 	for (int n = 0; n < FM_CHANNEL_COUNT; n++) m_abtFmFnumLatch[n] = 0;
-	for (int n = 0; n < 3; n++) m_abtFmCh3FnumLatch[n] = 0;
+	for (int nCh = 0; nCh < FM_CHANNEL_COUNT; nCh++) {
+		for (int n = 0; n < 3; n++) m_abtFmCh3FnumLatch[nCh][n] = 0;
+	}
 }
 
 // recompute FM ticks-per-output-sample (informational; the per-sample
@@ -1415,7 +1646,11 @@ void CPC88Opna::RecomputeFmOperatorPhaseInc(int nChannel, int nOpIndex) {
 	// values for op0/op1/op2, op3 always uses the channel-wide value.
 	uint16_t wFnum;
 	uint8_t btBlock;
-	if ((nChannel == 2) && m_bFmCh3SpecialMode && (nOpIndex < 3)) {
+	if (((nChannel == INTERNAL_FM_CHANNEL_BASE + 2) ||
+		 (nChannel == EXPANSION_FM_CHANNEL_BASE + 2) ||
+		 (nChannel == EXPANSION_FM_CHANNEL_BASE + 5)) &&
+		m_bFmCh3SpecialMode && (nOpIndex < 3))
+	{
 		wFnum   = ch.awFnumPerOp[nOpIndex];
 		btBlock = ch.abtBlockPerOp[nOpIndex];
 	} else {
@@ -1526,6 +1761,15 @@ bool CPC88Opna::ResolveFmSlotAddress(int nAddress, int& nChannel, int& nOpIndex)
 // handle a write to any FM register ($28, $30..$B2)
 
 void CPC88Opna::OnFmRegisterWrite(int nAddress, uint8_t btData) {
+	OnFmRegisterWriteAt(0, INTERNAL_FM_CHANNEL_BASE, nAddress, btData);
+}
+
+void CPC88Opna::OnFmRegisterWriteAt(int nPage, int nChannelBase,
+	int nAddress, uint8_t btData)
+{
+	if ((nChannelBase < 0) || (nChannelBase >= FM_CHANNEL_COUNT)) {
+		return;
+	}
 	// Always count writes, even when X88_FM_DEBUG is off — the
 	// counter is reported by the per-second [FM-mix] status line.
 	extern int g_nFmTotalWrites;
@@ -1556,7 +1800,10 @@ void CPC88Opna::OnFmRegisterWrite(int nAddress, uint8_t btData) {
 
 	// Key on/off
 	if (nAddress == 0x28) {
-		OnFmKeyOnOff(btData);
+		OnFmKeyOnOffAt(nChannelBase,
+			(nChannelBase == EXPANSION_FM_CHANNEL_BASE)?
+				OPNA_FM_CHANNEL_COUNT: OPN_FM_CHANNEL_COUNT,
+			btData);
 		return;
 	}
 
@@ -1566,6 +1813,8 @@ void CPC88Opna::OnFmRegisterWrite(int nAddress, uint8_t btData) {
 		if (!ResolveFmSlotAddress(nAddress, nCh, nOp)) {
 			return;  // unused slot column
 		}
+		nCh += nChannelBase;
+		if (nCh >= FM_CHANNEL_COUNT) return;
 		SFmOperator& op = m_aFmCh[nCh].aOp[nOp];
 		int nGroup = nAddress & 0xF0;
 		switch (nGroup) {
@@ -1607,7 +1856,8 @@ void CPC88Opna::OnFmRegisterWrite(int nAddress, uint8_t btData) {
 	// $A0 without first writing $A4 is a software bug; we apply the
 	// last-known latch value, which is what real hardware would do too.
 	if ((nAddress >= 0xA0) && (nAddress <= 0xA2)) {
-		int nCh = nAddress - 0xA0;
+		int nCh = nChannelBase + (nAddress - 0xA0);
+		if (nCh >= FM_CHANNEL_COUNT) return;
 		uint8_t btLatch = m_abtFmFnumLatch[nCh];
 		m_aFmCh[nCh].btBlock = (btLatch >> 3) & 0x07;
 		m_aFmCh[nCh].wFnum =
@@ -1617,34 +1867,46 @@ void CPC88Opna::OnFmRegisterWrite(int nAddress, uint8_t btData) {
 	}
 	// Channel BLOCK + F-Number high ($A4..$A6). Latch only — no commit.
 	if ((nAddress >= 0xA4) && (nAddress <= 0xA6)) {
-		int nCh = nAddress - 0xA4;
+		int nCh = nChannelBase + (nAddress - 0xA4);
+		if (nCh >= FM_CHANNEL_COUNT) return;
 		m_abtFmFnumLatch[nCh] = btData & 0x3F;  // BLOCK[2:0] + FNUM[10:8]
 		return;
 	}
 	// CH3 special mode F-Number low for OP1/OP2/OP3 ($A8..$AA) — commit.
 	if ((nAddress >= 0xA8) && (nAddress <= 0xAA)) {
+		int nSpecialCh = nChannelBase + 2;
+		if (nSpecialCh >= FM_CHANNEL_COUNT) return;
 		int nOp = nAddress - 0xA8;  // 0..2
-		uint8_t btLatch = m_abtFmCh3FnumLatch[nOp];
-		m_aFmCh[2].abtBlockPerOp[nOp] = (btLatch >> 3) & 0x07;
-		m_aFmCh[2].awFnumPerOp[nOp] =
+		uint8_t btLatch = m_abtFmCh3FnumLatch[nSpecialCh][nOp];
+		m_aFmCh[nSpecialCh].abtBlockPerOp[nOp] = (btLatch >> 3) & 0x07;
+		m_aFmCh[nSpecialCh].awFnumPerOp[nOp] =
 			(((uint16_t)(btLatch & 0x07)) << 8) | btData;
 		if (m_bFmCh3SpecialMode) {
-			RecomputeFmOperatorPhaseInc(2, nOp);
+			RecomputeFmOperatorPhaseInc(nSpecialCh, nOp);
 		}
 		return;
 	}
 	// CH3 special mode BLOCK + F-Number high for OP1/OP2/OP3 ($AC..$AE)
 	// — latch only.
 	if ((nAddress >= 0xAC) && (nAddress <= 0xAE)) {
+		int nSpecialCh = nChannelBase + 2;
+		if (nSpecialCh >= FM_CHANNEL_COUNT) return;
 		int nOp = nAddress - 0xAC;  // 0..2
-		m_abtFmCh3FnumLatch[nOp] = btData & 0x3F;
+		m_abtFmCh3FnumLatch[nSpecialCh][nOp] = btData & 0x3F;
 		return;
 	}
 	// Channel feedback / algorithm ($B0..$B2)
 	if ((nAddress >= 0xB0) && (nAddress <= 0xB2)) {
-		int nCh = nAddress - 0xB0;
+		int nCh = nChannelBase + (nAddress - 0xB0);
+		if (nCh >= FM_CHANNEL_COUNT) return;
 		m_aFmCh[nCh].btFb   = (btData >> 3) & 0x07;
 		m_aFmCh[nCh].btAlgo = btData & 0x07;
+		return;
+	}
+	if ((nAddress >= 0xB4) && (nAddress <= 0xB6)) {
+		int nCh = nChannelBase + (nAddress - 0xB4);
+		if (nCh >= FM_CHANNEL_COUNT) return;
+		m_aFmCh[nCh].btPan = btData & 0xC0;
 		return;
 	}
 }
@@ -1652,8 +1914,23 @@ void CPC88Opna::OnFmRegisterWrite(int nAddress, uint8_t btData) {
 // handle key on/off ($28)
 
 void CPC88Opna::OnFmKeyOnOff(uint8_t btData) {
-	int nCh = btData & 0x07;
-	if (nCh >= FM_CHANNEL_COUNT) {
+	OnFmKeyOnOffAt(INTERNAL_FM_CHANNEL_BASE, OPN_FM_CHANNEL_COUNT, btData);
+}
+
+void CPC88Opna::OnFmKeyOnOffAt(int nChannelBase, int nChannelCount,
+	uint8_t btData)
+{
+	int nCh;
+	if (nChannelCount > 3) {
+		nCh = (btData & 0x03) + ((btData & 0x04)? 3: 0);
+	} else {
+		nCh = btData & 0x07;
+	}
+	if (nCh >= nChannelCount) {
+		return;
+	}
+	nCh += nChannelBase;
+	if ((nCh < 0) || (nCh >= FM_CHANNEL_COUNT)) {
 		return;
 	}
 	SFmChannel& ch = m_aFmCh[nCh];
@@ -1761,7 +2038,11 @@ int CPC88Opna::ComputeFmKsr(int nChannel, int nOpIndex) {
 	const SFmOperator& op = ch.aOp[nOpIndex];
 	uint16_t wFnum;
 	uint8_t btBlock;
-	if ((nChannel == 2) && m_bFmCh3SpecialMode && (nOpIndex < 3)) {
+	if (((nChannel == INTERNAL_FM_CHANNEL_BASE + 2) ||
+		 (nChannel == EXPANSION_FM_CHANNEL_BASE + 2) ||
+		 (nChannel == EXPANSION_FM_CHANNEL_BASE + 5)) &&
+		m_bFmCh3SpecialMode && (nOpIndex < 3))
+	{
 		wFnum   = ch.awFnumPerOp[nOpIndex];
 		btBlock = ch.abtBlockPerOp[nOpIndex];
 	} else {
@@ -1955,6 +2236,198 @@ bool CPC88Opna::ApplySsgEgEndpoint(SFmOperator& op) {
 	return true;
 }
 
+static uint16_t ReadLe16(const uint8_t* p) {
+	return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint32_t ReadLe32(const uint8_t* p) {
+	return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+		((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+void CPC88Opna::LoadRhythmSamples() {
+	if (m_bRhythmSamplesLoaded) {
+		return;
+	}
+	m_bRhythmSamplesLoaded = true;
+	static const char* kNames[RHYTHM_CHANNEL_COUNT] = {
+		"2608_BD.WAV",
+		"2608_SD.WAV",
+		"2608_TOP.WAV",
+		"2608_HH.WAV",
+		"2608_TOM.WAV",
+		"2608_RIM.WAV"
+	};
+	for (int n = 0; n < RHYTHM_CHANNEL_COUNT; n++) {
+		if (!LoadOneRhythmSample(kNames[n], m_aRhythmSample[n])) {
+			fprintf(stderr, "[OPNA] rhythm sample not available: %s\n", kNames[n]);
+		}
+	}
+}
+
+bool CPC88Opna::LoadOneRhythmSample(const char* pszName, SRhythmSample& smp) {
+	smp.vSamples.clear();
+	smp.nSampleRate = 0;
+	if ((m_pSystemFileOpenCallback == NULL) || (pszName == NULL)) {
+		return false;
+	}
+	FILE* fp = m_pSystemFileOpenCallback(pszName);
+	if (fp == NULL) {
+		return false;
+	}
+	fseek(fp, 0, SEEK_END);
+	long nSize = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	if (nSize < 44) {
+		fclose(fp);
+		return false;
+	}
+	std::vector<uint8_t> vData((size_t)nSize);
+	if (fread(&vData[0], 1, (size_t)nSize, fp) != (size_t)nSize) {
+		fclose(fp);
+		return false;
+	}
+	fclose(fp);
+	if (memcmp(&vData[0], "RIFF", 4) != 0 || memcmp(&vData[8], "WAVE", 4) != 0) {
+		return false;
+	}
+	int nChannels = 0;
+	int nBits = 0;
+	int nRate = 0;
+	const uint8_t* pSample = NULL;
+	uint32_t nSampleBytes = 0;
+	size_t pos = 12;
+	while (pos + 8 <= vData.size()) {
+		const uint8_t* pChunk = &vData[pos];
+		uint32_t nChunkSize = ReadLe32(pChunk + 4);
+		pos += 8;
+		if (pos + nChunkSize > vData.size()) {
+			break;
+		}
+		if (memcmp(pChunk, "fmt ", 4) == 0 && nChunkSize >= 16) {
+			const uint8_t* p = &vData[pos];
+			uint16_t nFormat = ReadLe16(p + 0);
+			nChannels = ReadLe16(p + 2);
+			nRate = (int)ReadLe32(p + 4);
+			nBits = ReadLe16(p + 14);
+			if (nFormat != 1) {
+				return false;
+			}
+		} else if (memcmp(pChunk, "data", 4) == 0) {
+			pSample = &vData[pos];
+			nSampleBytes = nChunkSize;
+		}
+		pos += nChunkSize + (nChunkSize & 1);
+	}
+	if ((pSample == NULL) || (nChannels <= 0) || (nChannels > 2) ||
+		((nBits != 8) && (nBits != 16)) || (nRate <= 0))
+	{
+		return false;
+	}
+	int nBytesPerSample = nBits / 8;
+	int nFrameBytes = nBytesPerSample * nChannels;
+	int nFrames = (int)(nSampleBytes / nFrameBytes);
+	if (nFrames <= 0) {
+		return false;
+	}
+	smp.vSamples.resize(nFrames);
+	smp.nSampleRate = nRate;
+	for (int i = 0; i < nFrames; i++) {
+		int nSum = 0;
+		for (int ch = 0; ch < nChannels; ch++) {
+			const uint8_t* p = pSample + i * nFrameBytes + ch * nBytesPerSample;
+			int nVal;
+			if (nBits == 8) {
+				nVal = ((int)*p - 128) << 8;
+			} else {
+				nVal = (int)(int16_t)ReadLe16(p);
+			}
+			nSum += nVal;
+		}
+		smp.vSamples[i] = (int16_t)(nSum / nChannels);
+	}
+	fprintf(stderr, "[OPNA] loaded rhythm sample %s (%d Hz, %d frames)\n",
+		pszName, nRate, nFrames);
+	return true;
+}
+
+void CPC88Opna::OnRhythmRegisterWrite(int nAddress, uint8_t btData) {
+	if (nAddress == 0x10) {
+		for (int n = 0; n < RHYTHM_CHANNEL_COUNT; n++) {
+			if ((btData & (1 << n)) == 0) {
+				continue;
+			}
+			if (btData & 0x80) {
+				m_aRhythmVoice[n].bActive = false;
+			} else {
+				m_aRhythmVoice[n].bActive =
+					!m_aRhythmSample[n].vSamples.empty();
+				m_aRhythmVoice[n].nPosX16 = 0;
+				if ((m_aRhythmSample[n].nSampleRate > 0) && (m_nSampleRate > 0)) {
+					m_aRhythmVoice[n].nStepX16 =
+						(uint32_t)(((long long)m_aRhythmSample[n].nSampleRate << 16) /
+							(long long)m_nSampleRate);
+					if (m_aRhythmVoice[n].nStepX16 == 0) {
+						m_aRhythmVoice[n].nStepX16 = 1;
+					}
+				}
+			}
+		}
+		return;
+	}
+	if (nAddress == 0x11) {
+		m_btRhythmTotalLevel = btData & 0x3F;
+		return;
+	}
+	if ((nAddress >= 0x18) && (nAddress <= 0x1D)) {
+		int n = nAddress - 0x18;
+		m_aRhythmVoice[n].btPan = btData & 0xC0;
+		m_aRhythmVoice[n].btLevel = btData & 0x1F;
+		return;
+	}
+}
+
+void CPC88Opna::RenderRhythmStereoSample(int& nLeft, int& nRight) {
+	nLeft = 0;
+	nRight = 0;
+	if ((m_nSoundBoardMode != SOUNDBOARD_OPNA) &&
+		(m_nSoundBoardMode != SOUNDBOARD_OPN_OPNA))
+	{
+		return;
+	}
+	if (m_bExpansionOpnaMute) {
+		return;
+	}
+	for (int n = 0; n < RHYTHM_CHANNEL_COUNT; n++) {
+		SRhythmVoice& v = m_aRhythmVoice[n];
+		SRhythmSample& smp = m_aRhythmSample[n];
+		if (!v.bActive || smp.vSamples.empty()) {
+			continue;
+		}
+		uint32_t nPos = v.nPosX16 >> 16;
+		if (nPos >= smp.vSamples.size()) {
+			v.bActive = false;
+			continue;
+		}
+		int nSample = smp.vSamples[nPos];
+		v.nPosX16 += v.nStepX16;
+		int nInstGain = (int)(v.btLevel & 0x1F);
+		int nTotalGain = (int)(m_btRhythmTotalLevel & 0x3F);
+		if (nInstGain == 0 || nTotalGain == 0) {
+			continue;
+		}
+		nSample = (nSample * nInstGain * nTotalGain) / (31 * 63 * 2);
+		uint8_t btPan = v.btPan;
+		bool bL = (btPan & 0x80) != 0;
+		bool bR = (btPan & 0x40) != 0;
+		if (!bL && !bR) {
+			bL = bR = true;
+		}
+		if (bL) nLeft += nSample;
+		if (bR) nRight += nSample;
+	}
+}
+
 // compute one operator's output sample (with optional modulation)
 
 int CPC88Opna::RenderFmOperator(SFmOperator& op, int nModulation) {
@@ -2008,7 +2481,53 @@ int CPC88Opna::RenderFmOperator(SFmOperator& op, int nModulation) {
 	return nOut;
 }
 
-// produce one mono FM sample by mixing all 3 channels
+void CPC88Opna::RenderFmStereoSample(int& nLeft, int& nRight) {
+	nLeft = 0;
+	nRight = 0;
+	for (int nCh = 0; nCh < FM_CHANNEL_COUNT; nCh++) {
+		int nChOut = RenderFmChannel(nCh);
+		if (m_abFmChMute[nCh]) {
+			continue;
+		}
+		bool bInternal = (nCh >= INTERNAL_FM_CHANNEL_BASE) &&
+			(nCh < INTERNAL_FM_CHANNEL_BASE + OPN_FM_CHANNEL_COUNT);
+		bool bExpansion = (nCh >= EXPANSION_FM_CHANNEL_BASE) &&
+			(nCh < EXPANSION_FM_CHANNEL_BASE + OPNA_FM_CHANNEL_COUNT);
+		if (bInternal) {
+			if ((m_nSoundBoardMode != SOUNDBOARD_OPN) &&
+				(m_nSoundBoardMode != SOUNDBOARD_OPN_OPNA))
+			{
+				continue;
+			}
+			if (m_bInternalOpnMute) {
+				continue;
+			}
+			nLeft += nChOut;
+			nRight += nChOut;
+		} else if (bExpansion) {
+			if ((m_nSoundBoardMode != SOUNDBOARD_OPNA) &&
+				(m_nSoundBoardMode != SOUNDBOARD_OPN_OPNA))
+			{
+				continue;
+			}
+			if (m_bExpansionOpnaMute) {
+				continue;
+			}
+			uint8_t btPan = m_aFmCh[nCh].btPan;
+			bool bL = (btPan & 0x80) != 0;
+			bool bR = (btPan & 0x40) != 0;
+			if (!bL && !bR) {
+				bL = bR = true;
+			}
+			if (bL) nLeft += nChOut;
+			if (bR) nRight += nChOut;
+		}
+	}
+	nLeft >>= 1;
+	nRight >>= 1;
+}
+
+// produce one mono FM sample by mixing all channels
 
 int CPC88Opna::RenderFmSample() {
 	int anChOut[FM_CHANNEL_COUNT] = { 0, 0, 0 };

@@ -1371,6 +1371,34 @@ protected:
 	static uint8_t ReadIO_45(int nAddress);
 	// I/O port 45 write
 	static void WriteIO_45(int nAddress, uint8_t btData);
+	// I/O port 46 read
+	static uint8_t ReadIO_46(int nAddress);
+	// I/O port 46 write
+	static void WriteIO_46(int nAddress, uint8_t btData);
+	// I/O port 47 read
+	static uint8_t ReadIO_47(int nAddress);
+	// I/O port 47 write
+	static void WriteIO_47(int nAddress, uint8_t btData);
+	// I/O port A8 read
+	static uint8_t ReadIO_A8(int nAddress);
+	// I/O port A8 write
+	static void WriteIO_A8(int nAddress, uint8_t btData);
+	// I/O port A9 read
+	static uint8_t ReadIO_A9(int nAddress);
+	// I/O port A9 write
+	static void WriteIO_A9(int nAddress, uint8_t btData);
+	// I/O port AA read
+	static uint8_t ReadIO_AA(int nAddress);
+	// I/O port AA write
+	static void WriteIO_AA(int nAddress, uint8_t btData);
+	// I/O port AC read
+	static uint8_t ReadIO_AC(int nAddress);
+	// I/O port AC write
+	static void WriteIO_AC(int nAddress, uint8_t btData);
+	// I/O port AD read
+	static uint8_t ReadIO_AD(int nAddress);
+	// I/O port AD write
+	static void WriteIO_AD(int nAddress, uint8_t btData);
 	// I/O port 50 read
 	static uint8_t ReadIO_50(int nAddress);
 	// I/O port 50 write

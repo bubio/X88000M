@@ -364,6 +364,7 @@ void CPC88::Initialize() {
 	Crtc().SetIntVectChangeCallback(IntVectChangeMain);
 	Usart().SetIntVectChangeCallback(IntVectChangeMain);
 	Opna().SetIntVectChangeCallback(IntVectChangeMain);
+	Opna().SetSystemFileOpenCallback(SysFileOpen);
 	Ppi().SetATNActivateCallback(PpiATNActivate);
 	Fdc().SetIntVectChangeCallback(IntVectChangeSub);
 	Pcg().SetCurTextFontRomGetCallback(PcgCurTextFontRomGet);
