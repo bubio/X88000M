@@ -833,7 +833,9 @@ void CPC88Opna::WriteDataSoundBoard2Upper(uint8_t btData) {
 }
 
 void CPC88Opna::WriteSoundBoard2InterruptMask(uint8_t btData) {
-	m_bSoundBoard2InterruptMask = ((btData & 0x01) != 0);
+	// AAh bit7 is S2INTM: 0 = Sound Board II interrupt enabled,
+	// 1 = interrupt masked. Lower bits are not the mask bit.
+	m_bSoundBoard2InterruptMask = ((btData & 0x80) != 0);
 	if (m_bSoundBoard2InterruptMask &&
 		(m_nSoundBoardMode == SOUNDBOARD_OPN_OPNA))
 	{

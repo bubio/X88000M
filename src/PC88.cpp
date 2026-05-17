@@ -531,7 +531,9 @@ void CPC88::IntVectChangeMain() {
 	if ((m_nIntVect < 0) &&
 		Opna().IsOpnaInterruptRequest())
 	{
-		if (!Z80Main().IsPsgInterruptMask() &&
+		const bool bSoundBoard2Interrupt =
+			(Opna().GetSoundBoardMode() == CPC88Opna::SOUNDBOARD_OPN_OPNA);
+		if ((!Z80Main().IsPsgInterruptMask() || bSoundBoard2Interrupt) &&
 			(Z80Main().IsPriorityInterrupt() ||
 				(Z80Main().GetInterruptLevel() > 4)))
 		{
