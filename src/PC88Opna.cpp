@@ -390,15 +390,28 @@ static double GetRhythmMixScale() {
 	return s_scale;
 }
 
-static bool GetAdpcmInterruptEnabled() {
+static int GetAdpcmInterruptMask() {
 	static int s_checked = 0;
-	static bool s_enabled = false;
+	static int s_mask = 0x04;
 	if (!s_checked) {
 		s_checked = 1;
 		const char* p = getenv("X88_ADPCM_IRQ");
-		s_enabled = (p != NULL) && (*p != '\0') && (*p != '0');
+		if ((p != NULL) && ((*p == '\0') || (*p == '0'))) {
+			s_mask = 0;
+		} else if (p != NULL) {
+			if ((strcmp(p, "full") == 0) || (strcmp(p, "FULL") == 0) ||
+				(strcmp(p, "all") == 0) || (strcmp(p, "ALL") == 0) ||
+				(strcmp(p, "brdy") == 0) || (strcmp(p, "BRDY") == 0))
+			{
+				s_mask = 0x04 | 0x08 | 0x10;
+			} else if ((strcmp(p, "eos") == 0) || (strcmp(p, "EOS") == 0) ||
+				(strcmp(p, "1") == 0))
+			{
+				s_mask = 0x04;
+			}
+		}
 	}
-	return s_enabled;
+	return s_mask;
 }
 
 static int GetAdpcmDeclickSamples() {
@@ -597,7 +610,7 @@ void CPC88Opna::AdvanceTimerState(STimerState& state, int nClock,
 	}
 	if (m_bTimerBAcvive) {
 		if ((m_nTimerBCounter -= nClock) <= 0) {
-			TimerBOverFlow();
+			TimerBOverFlow(bExpansion);
 		}
 	}
 	SaveTimerState(state);
@@ -793,10 +806,13 @@ int CPC88Opna::RenderSsgDevice(bool bExpansion) {
 
 void CPC88Opna::TimerAOverFlow(bool bExpansion) {
 	if (m_bTimerASetFlag) {
-		if ((m_btStatus & 0x01) == 0) {
+		bool bMasked = bExpansion && ((m_adpcm.btFlagControl & 0x01) != 0);
+		if (!bMasked && ((m_btStatus & 0x01) == 0)) {
 			UpdateInterruptRequest(true);
 		}
-		m_btStatus |= 0x01;
+		if (!bMasked) {
+			m_btStatus |= 0x01;
+		}
 	}
 	// CH3 mode 1 = CSM: every Timer A overflow forces a
 	// key-on retrigger on all four operators of CH3 regardless of
@@ -813,12 +829,15 @@ void CPC88Opna::TimerAOverFlow(bool bExpansion) {
 
 // timer B overflow
 
-void CPC88Opna::TimerBOverFlow() {
+void CPC88Opna::TimerBOverFlow(bool bExpansion) {
 	if (m_bTimerBSetFlag) {
-		if ((m_btStatus & 0x02) == 0) {
+		bool bMasked = bExpansion && ((m_adpcm.btFlagControl & 0x02) != 0);
+		if (!bMasked && ((m_btStatus & 0x02) == 0)) {
 			UpdateInterruptRequest(true);
 		}
-		m_btStatus |= 0x02;
+		if (!bMasked) {
+			m_btStatus |= 0x02;
+		}
 	}
 	do {
 		m_nTimerBCounter += m_nTimerBCounterMax;
@@ -1143,10 +1162,8 @@ void CPC88Opna::WriteSoundBoard2InterruptMask(uint8_t btData) {
 		(m_nSoundBoardMode == SOUNDBOARD_OPN_OPNA))
 	{
 		UpdateInterruptRequest(false);
-	} else if ((m_nSoundBoardMode == SOUNDBOARD_OPN_OPNA) &&
-		((m_timerExpansionOpna.btStatus & 0x03) != 0))
-	{
-		UpdateInterruptRequest(true);
+	} else {
+		RefreshInterruptRequest();
 	}
 }
 
@@ -2704,6 +2721,7 @@ void CPC88Opna::ResetAdpcmState() {
 	m_adpcm.btControl2 = 0;
 	m_adpcm.btFlagControl = 0x1C;
 	m_adpcm.btStatus = 0;
+	m_adpcm.btIrqStatus = 0;
 	m_adpcm.nStartAddr = 0;
 	m_adpcm.nStopAddr = 0;
 	m_adpcm.nLimitAddr = ADPCM_MEMORY_SIZE - 1;
@@ -2789,7 +2807,9 @@ void CPC88Opna::UpdateAdpcmStep() {
 }
 
 uint8_t CPC88Opna::ReadAdpcmStatus() {
-	return (m_timerExpansionOpna.btStatus & 0x03) | (m_adpcm.btStatus & 0x3C);
+	uint8_t btTimerStatus = m_timerExpansionOpna.btStatus & 0x03;
+	btTimerStatus &= (uint8_t)~(m_adpcm.btFlagControl & 0x03);
+	return btTimerStatus | (m_adpcm.btStatus & 0x3C);
 }
 
 uint8_t CPC88Opna::ReadAdpcmData() {
@@ -2812,7 +2832,7 @@ uint8_t CPC88Opna::ReadAdpcmData() {
 		SetAdpcmStatusFlag(ADPCM_STATUS_BRDY);
 		if (m_adpcm.nCurrentAddr == m_adpcm.nStopAddr) {
 			m_adpcm.bTransferEnded = true;
-			SetAdpcmStatusFlag(ADPCM_STATUS_EOS);
+			SetAdpcmStatusFlag(ADPCM_STATUS_EOS, false);
 		} else {
 			AdvanceAdpcmAddress();
 		}
@@ -2820,16 +2840,21 @@ uint8_t CPC88Opna::ReadAdpcmData() {
 	return btData;
 }
 
-void CPC88Opna::SetAdpcmStatusFlag(uint8_t btFlag) {
+void CPC88Opna::SetAdpcmStatusFlag(uint8_t btFlag, bool bRaiseIrq) {
 	if ((btFlag == ADPCM_STATUS_EOS) && (m_adpcm.btFlagControl & 0x04)) return;
 	if ((btFlag == ADPCM_STATUS_BRDY) && (m_adpcm.btFlagControl & 0x08)) return;
 	if ((btFlag == ADPCM_STATUS_ZERO) && (m_adpcm.btFlagControl & 0x10)) return;
+	bool bNewFlag = ((m_adpcm.btStatus & btFlag) == 0);
 	m_adpcm.btStatus |= btFlag;
+	if (bRaiseIrq && bNewFlag) {
+		m_adpcm.btIrqStatus |= btFlag;
+	}
 	RefreshInterruptRequest();
 }
 
 void CPC88Opna::ClearAdpcmStatusFlag(uint8_t btFlag) {
 	m_adpcm.btStatus &= ~btFlag;
+	m_adpcm.btIrqStatus &= ~btFlag;
 	RefreshInterruptRequest();
 }
 
@@ -2843,11 +2868,29 @@ void CPC88Opna::RefreshInterruptRequest() {
 	}
 	if ((m_nSoundBoardMode == SOUNDBOARD_OPNA ||
 		 m_nSoundBoardMode == SOUNDBOARD_OPN_OPNA) &&
-		((m_timerExpansionOpna.btStatus & 0x03) != 0))
+		(((m_timerExpansionOpna.btStatus & 0x03) &
+			~(m_adpcm.btFlagControl & 0x03)) != 0))
 	{
 		bRequest = true;
 	}
-	if (GetAdpcmInterruptEnabled() && ((m_adpcm.btStatus & 0x1C) != 0)) {
+	int nAdpcmIrqMask = GetAdpcmInterruptMask();
+	bool bExpansionTimerIrqSource =
+		(m_timerExpansionOpna.bTimerAActive && m_timerExpansionOpna.bTimerASetFlag) ||
+		(m_timerExpansionOpna.bTimerBActive && m_timerExpansionOpna.bTimerBSetFlag);
+	// PC-88 sound drivers commonly use the OPNA timer IRQ as the music
+	// clock and poll STATUS1 for ADPCM completion. Feeding EOS as an
+	// extra CPU sound interrupt in that state makes those drivers advance
+	// the music once per sample end. Still route ADPCM IRQs when the
+	// OPNA timers are not the active IRQ source, or when software masks
+	// both timer flags in $10 and is explicitly using ADPCM as the IRQ
+	// source.
+	bool bAdpcmIrqMayShareCpuLine =
+		!bExpansionTimerIrqSource ||
+		((m_adpcm.btFlagControl & 0x03) == 0x03);
+	if (nAdpcmIrqMask != 0 &&
+		bAdpcmIrqMayShareCpuLine &&
+		((m_adpcm.btIrqStatus & nAdpcmIrqMask) != 0))
+	{
 		bRequest = true;
 	}
 	UpdateInterruptRequest(bRequest);
@@ -2904,6 +2947,8 @@ void CPC88Opna::WriteAdpcmRegister(int nAddress, uint8_t btData) {
 	m_abtAdpcmRegisters[nAddress] = btData;
 	switch (nAddress) {
 	case 0x00:
+		{
+		uint8_t btPrevControl1 = m_adpcm.btControl1;
 		m_adpcm.btControl1 = btData;
 		if (btData & 0x01) {
 			StopAdpcmPlayback(false);
@@ -2917,6 +2962,8 @@ void CPC88Opna::WriteAdpcmRegister(int nAddress, uint8_t btData) {
 			m_adpcm.vCpuFifo.clear();
 			return;
 		}
+		bool bStartEdge = ((btPrevControl1 & 0x80) == 0) &&
+			((btData & 0x80) != 0);
 		m_adpcm.bMemoryWrite = ((btData & 0x60) == 0x60);
 		m_adpcm.bMemoryRead = ((btData & 0x60) == 0x20);
 		if (m_adpcm.bMemoryWrite || m_adpcm.bMemoryRead) {
@@ -2926,7 +2973,7 @@ void CPC88Opna::WriteAdpcmRegister(int nAddress, uint8_t btData) {
 			m_adpcm.bTransferStarted = false;
 			SetAdpcmStatusFlag(ADPCM_STATUS_BRDY);
 		}
-		if ((btData & 0x80) && (btData & 0x20) && ((btData & 0x40) == 0)) {
+		if (bStartEdge && (btData & 0x20) && ((btData & 0x40) == 0)) {
 			StartAdpcmPlayback(true);
 		} else if ((btData & 0x80) == 0 && m_adpcm.bPlaying) {
 			StopAdpcmPlayback(false);
@@ -2936,6 +2983,7 @@ void CPC88Opna::WriteAdpcmRegister(int nAddress, uint8_t btData) {
 				UpdateAdpcmStep();
 				SetAdpcmStatusFlag(ADPCM_STATUS_BRDY);
 			}
+		}
 		}
 		break;
 	case 0x01:
@@ -2959,7 +3007,7 @@ void CPC88Opna::WriteAdpcmRegister(int nAddress, uint8_t btData) {
 			}
 			SetAdpcmStatusFlag(ADPCM_STATUS_BRDY);
 			if (m_adpcm.bTransferEnded) {
-				SetAdpcmStatusFlag(ADPCM_STATUS_EOS);
+				SetAdpcmStatusFlag(ADPCM_STATUS_EOS, false);
 			}
 		} else if (m_adpcm.bCpuStream) {
 			m_adpcm.vCpuFifo.push_back(btData);
@@ -2974,18 +3022,26 @@ void CPC88Opna::WriteAdpcmRegister(int nAddress, uint8_t btData) {
 		break;
 	case 0x10:
 		if (btData & 0x80) {
+			m_timerExpansionOpna.btStatus = 0;
 			m_adpcm.btStatus = 0;
-			if (m_adpcm.bCpuStream || m_adpcm.bMemoryWrite || m_adpcm.bMemoryRead) {
-				SetAdpcmStatusFlag(ADPCM_STATUS_BRDY);
-			}
+			m_adpcm.btIrqStatus = 0;
 			RefreshInterruptRequest();
 		} else {
 			m_adpcm.btFlagControl = btData & 0x1F;
 			if (btData & 0x01) m_timerExpansionOpna.btStatus &= 0xFE;
 			if (btData & 0x02) m_timerExpansionOpna.btStatus &= 0xFD;
-			if (btData & 0x04) m_adpcm.btStatus &= ~ADPCM_STATUS_EOS;
-			if (btData & 0x08) m_adpcm.btStatus &= ~ADPCM_STATUS_BRDY;
-			if (btData & 0x10) m_adpcm.btStatus &= ~ADPCM_STATUS_ZERO;
+			if (btData & 0x04) {
+				m_adpcm.btStatus &= ~ADPCM_STATUS_EOS;
+				m_adpcm.btIrqStatus &= ~ADPCM_STATUS_EOS;
+			}
+			if (btData & 0x08) {
+				m_adpcm.btStatus &= ~ADPCM_STATUS_BRDY;
+				m_adpcm.btIrqStatus &= ~ADPCM_STATUS_BRDY;
+			}
+			if (btData & 0x10) {
+				m_adpcm.btStatus &= ~ADPCM_STATUS_ZERO;
+				m_adpcm.btIrqStatus &= ~ADPCM_STATUS_ZERO;
+			}
 			if (((btData & 0x08) == 0) &&
 				(m_adpcm.bCpuStream || m_adpcm.bMemoryWrite || m_adpcm.bMemoryRead))
 			{

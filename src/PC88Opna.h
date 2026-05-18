@@ -408,6 +408,7 @@ protected:
 		uint8_t btControl2;
 		uint8_t btFlagControl;
 		uint8_t btStatus;
+		uint8_t btIrqStatus;
 		uint32_t nStartAddr;
 		uint32_t nStopAddr;
 		uint32_t nLimitAddr;
@@ -452,6 +453,9 @@ public:
 	}
 	// set OPNA interrupt requested
 	static void SetOpnaInterruptRequest(bool bOpnaInterruptRequest) {
+		if (!bOpnaInterruptRequest) {
+			m_adpcm.btIrqStatus = 0;
+		}
 		m_bOpnaInterruptRequest = bOpnaInterruptRequest;
 	}
 
@@ -685,13 +689,13 @@ protected:
 	static bool DecodeNextAdpcmSample(int& nSample);
 	static bool PrimeAdpcmInterpolator();
 	static void DecodeAdpcmNibble(uint8_t btNibble);
-	static void SetAdpcmStatusFlag(uint8_t btFlag);
+	static void SetAdpcmStatusFlag(uint8_t btFlag, bool bRaiseIrq = true);
 	static void ClearAdpcmStatusFlag(uint8_t btFlag);
 	static void RefreshInterruptRequest();
 	static void LoadTimerState(const STimerState& state);
 	static void SaveTimerState(STimerState& state);
 	static void ResetTimerState(STimerState& state);
-		static void AdvanceTimerState(STimerState& state, int nClock, bool bExpansion);
+	static void AdvanceTimerState(STimerState& state, int nClock, bool bExpansion);
 	static void WriteTimerDeviceRegister(bool bExpansion, int nAddress, uint8_t btData);
 	static void LoadSsgState(const SSsgState& state);
 	static void SaveSsgState(SSsgState& state);
@@ -704,9 +708,9 @@ protected:
 
 public:
 	// timer A overflow
-		static void TimerAOverFlow(bool bExpansion);
+	static void TimerAOverFlow(bool bExpansion);
 	// timer B overflow
-		static void TimerBOverFlow();
+	static void TimerBOverFlow(bool bExpansion);
 	// set timer A counter max value
 	static void SetTimerACounterMax();
 	// set timer B counter max value
