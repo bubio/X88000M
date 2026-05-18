@@ -174,7 +174,11 @@ int g_nOpnTotalWrites = 0;
 int                   CPC88Opna::m_anFmSinTable[CPC88Opna::FM_SIN_TABLE_SIZE];
 int                   CPC88Opna::m_anFmExpTable[CPC88Opna::FM_EXP_TABLE_SIZE];
 int                   CPC88Opna::m_anFmEnvRateTable[CPC88Opna::FM_ENV_RATE_TABLE_SIZE];
+int                   CPC88Opna::m_anFmLfoSinTable[CPC88Opna::FM_LFO_TABLE_SIZE];
 int                   CPC88Opna::m_anFmDetunePhaseInc[CPC88Opna::FM_DT_BLOCKS][CPC88Opna::FM_DT_NOTES][CPC88Opna::FM_DT_FDS];
+uint8_t               CPC88Opna::m_btOpnaLfoControl = 0;
+uint32_t              CPC88Opna::m_nOpnaLfoPhase = 0;
+uint32_t              CPC88Opna::m_nOpnaLfoPhaseInc = 0;
 CPC88Opna::SRhythmSample CPC88Opna::m_aRhythmSample[CPC88Opna::RHYTHM_CHANNEL_COUNT];
 CPC88Opna::SRhythmVoice  CPC88Opna::m_aRhythmVoice[CPC88Opna::RHYTHM_CHANNEL_COUNT];
 bool CPC88Opna::m_bRhythmSamplesLoaded = false;
@@ -352,6 +356,16 @@ static double GetFmMixScale() {
 	if (!s_checked) {
 		s_checked = 1;
 		s_scale = ReadEnvDouble("X88_FM_MIX_SCALE", 1.6, 0.0, 4.0);
+	}
+	return s_scale;
+}
+
+static double GetFmLfoPmScale() {
+	static int s_checked = 0;
+	static double s_scale = 0.7;
+	if (!s_checked) {
+		s_checked = 1;
+		s_scale = ReadEnvDouble("X88_FM_LFO_PM_SCALE", 0.7, 0.0, 2.0);
 	}
 	return s_scale;
 }
@@ -980,8 +994,7 @@ void CPC88Opna::WriteLowerDataForTargets(uint8_t btData,
 		}
 	}
 		// Phase C-FM: $28 (key on/off), $30–$B2 (FM operator/channel
-		// parameters), and OPNA $B4–$B6 pan bits. LFO/AMS/PMS values are
-		// stored but not yet applied to synthesis.
+		// parameters), and OPNA $B4–$B6 pan / AMS / PMS bits.
 	if (bInternalOpn) {
 		OnFmRegisterWriteAt(0, INTERNAL_FM_CHANNEL_BASE, m_nAddress, btData);
 	}
@@ -1744,6 +1757,11 @@ void CPC88Opna::BuildFmTables() {
 		m_anFmExpTable[n] = (int)(dExp * 8192.0 + 0.5);
 	}
 
+	for (int n = 0; n < FM_LFO_TABLE_SIZE; n++) {
+		double dAngle = ((double)n / (double)FM_LFO_TABLE_SIZE) * dPI * 2.0;
+		m_anFmLfoSinTable[n] = (int)(sin(dAngle) * 1024.0);
+	}
+
 	// Envelope rate table: rate 0..63 → average counter increment per
 	// FM section clock, in 16.16 fixed point. The standard YM2151/
 	// YM2203 envelope counter formula uses two parameters derived from
@@ -1836,6 +1854,9 @@ void CPC88Opna::BuildFmTables() {
 // reset all FM operator/channel state to a quiet baseline
 
 void CPC88Opna::ResetFmState() {
+	m_btOpnaLfoControl = 0;
+	m_nOpnaLfoPhase = 0;
+	m_nOpnaLfoPhaseInc = 0;
 	for (int nCh = 0; nCh < FM_CHANNEL_COUNT; nCh++) {
 		SFmChannel& ch = m_aFmCh[nCh];
 		ch.wFnum   = 0;
@@ -1843,6 +1864,8 @@ void CPC88Opna::ResetFmState() {
 		ch.btAlgo  = 0;
 		ch.btFb    = 0;
 			ch.btPan   = 0xC0;
+			ch.btAms   = 0;
+			ch.btPms   = 0;
 			ch.anFeedback[0] = 0;
 			ch.anFeedback[1] = 0;
 			ch.nFmPhaseScaleX16 = 0;
@@ -1867,6 +1890,7 @@ void CPC88Opna::ResetFmState() {
 			op.btKs       = 0;
 			op.btMul      = 0;
 			op.btDt       = 0;
+			op.btAm       = 0;
 			op.bKeyOn     = false;
 			op.btSsgEg    = 0;
 			op.bSsgEgInverted = false;
@@ -1888,6 +1912,7 @@ void CPC88Opna::UpdateFmTickRate() {
 	if ((m_nSampleRate <= 0) || (m_nPreScalerFM <= 0) || (m_nBaseClock <= 0)) {
 		m_nFmTicksPerSampleX16 = 0;
 		m_nFmPhaseScaleX16     = 0;
+		UpdateOpnaLfoPhaseInc();
 		return;
 	}
 	// FM section clock = chip / prescaler_fm / 6. The YM2203 chip clock
@@ -1941,6 +1966,53 @@ void CPC88Opna::UpdateFmTickRate() {
 			}
 		}
 	}
+	UpdateOpnaLfoPhaseInc();
+}
+
+void CPC88Opna::UpdateOpnaLfoPhaseInc() {
+	static const double s_adLfoFreqHz[8] = {
+		3.98, 5.56, 6.02, 6.37, 6.88, 9.63, 48.1, 72.2
+	};
+	if ((m_btOpnaLfoControl & 0x08) == 0 || m_nSampleRate <= 0) {
+		m_nOpnaLfoPhaseInc = 0;
+		return;
+	}
+	int nFreq = m_btOpnaLfoControl & 0x07;
+	double dInc = s_adLfoFreqHz[nFreq] *
+		(double)(1u << FM_LFO_PHASE_BITS) / (double)m_nSampleRate;
+	if (dInc < 1.0) dInc = 1.0;
+	if (dInc > 4294967295.0) dInc = 4294967295.0;
+	m_nOpnaLfoPhaseInc = (uint32_t)(dInc + 0.5);
+}
+
+void CPC88Opna::AdvanceOpnaLfo() {
+	if (m_nOpnaLfoPhaseInc == 0) {
+		return;
+	}
+	m_nOpnaLfoPhase =
+		(m_nOpnaLfoPhase + m_nOpnaLfoPhaseInc) &
+		((1u << FM_LFO_PHASE_BITS) - 1u);
+}
+
+int CPC88Opna::GetOpnaLfoValue() {
+	if (m_nOpnaLfoPhaseInc == 0) {
+		return 0;
+	}
+	int nIndex = (int)(m_nOpnaLfoPhase >> (FM_LFO_PHASE_BITS - 10));
+	return m_anFmLfoSinTable[nIndex & (FM_LFO_TABLE_SIZE - 1)];
+}
+
+int CPC88Opna::GetOpnaLfoAmDepth() {
+	if (m_nOpnaLfoPhaseInc == 0) {
+		return 0;
+	}
+	int nIndex = (int)(m_nOpnaLfoPhase >> (FM_LFO_PHASE_BITS - 10));
+	int nCos = m_anFmLfoSinTable[(nIndex + FM_LFO_TABLE_SIZE / 4) &
+		(FM_LFO_TABLE_SIZE - 1)];
+	int nDepth = (1024 - nCos) / 2;
+	if (nDepth < 0) nDepth = 0;
+	if (nDepth > 1024) nDepth = 1024;
+	return nDepth;
 }
 
 int CPC88Opna::ComputeFmPhaseScaleX16() {
@@ -2132,6 +2204,19 @@ void CPC88Opna::OnFmRegisterWriteAt(int nPage, int nChannelBase,
 		}
 	}
 
+	if (nAddress == 0x22) {
+		if (nChannelBase == EXPANSION_FM_CHANNEL_BASE ||
+			nChannelBase == EXPANSION_FM_CHANNEL_BASE + 3)
+		{
+			m_btOpnaLfoControl = btData & 0x0F;
+			if ((m_btOpnaLfoControl & 0x08) == 0) {
+				m_nOpnaLfoPhase = 0;
+			}
+			UpdateOpnaLfoPhaseInc();
+		}
+		return;
+	}
+
 	// Key on/off
 	if (nAddress == 0x28) {
 		OnFmKeyOnOffAt(nChannelBase,
@@ -2164,7 +2249,8 @@ void CPC88Opna::OnFmRegisterWriteAt(int nPage, int nChannelBase,
 			op.btKs = (btData >> 6) & 0x03;
 			op.btAr = btData & 0x1F;
 			break;
-		case 0x60:  // AM (bit 7, ignored on YM2203) + DR (5 bit)
+		case 0x60:  // OPNA AMON (bit 7) + DR (5 bit)
+			op.btAm = (btData >> 7) & 0x01;
 			op.btDr = btData & 0x1F;
 			break;
 		case 0x70:  // SR (5 bit)
@@ -2246,6 +2332,8 @@ void CPC88Opna::OnFmRegisterWriteAt(int nPage, int nChannelBase,
 		int nCh = nChannelBase + (nAddress - 0xB4);
 		if (nCh >= FM_CHANNEL_COUNT) return;
 		m_aFmCh[nCh].btPan = btData & 0xC0;
+		m_aFmCh[nCh].btAms = (btData >> 4) & 0x03;
+		m_aFmCh[nCh].btPms = btData & 0x07;
 		return;
 	}
 }
@@ -3265,11 +3353,59 @@ void CPC88Opna::RenderRhythmStereoSample(int& nLeft, int& nRight) {
 	}
 }
 
+int CPC88Opna::ComputeFmLfoPmDelta(const SFmOperator& op, int nPms,
+	int nLfoValue)
+{
+	static const double s_adPmsCents[8] = {
+		0.0, 3.4, 6.7, 10.0, 14.0, 20.0, 40.0, 80.0
+	};
+	if ((m_nOpnaLfoPhaseInc == 0) || (nPms <= 0) || (nPms >= 8) ||
+		(nLfoValue == 0) || (op.nPhaseInc == 0))
+	{
+		return 0;
+	}
+	double dCents =
+		s_adPmsCents[nPms] * GetFmLfoPmScale() *
+		(double)nLfoValue / 1024.0;
+	// For the small PMS range (max ±80 cents), the linearized pitch
+	// ratio is close enough and avoids a pow() in every operator call:
+	//   2^(cents/1200)-1 ~= ln(2) * cents / 1200.
+	double dDelta = (double)op.nPhaseInc * dCents * 0.0005776226504666211;
+	if (dDelta >= 0.0) return (int)(dDelta + 0.5);
+	return (int)(dDelta - 0.5);
+}
+
+int CPC88Opna::ComputeFmLfoAmAtten(const SFmOperator& op, int nAms,
+	int nAmDepth)
+{
+	static const double s_adAmsDb[4] = { 0.0, 1.4, 5.9, 11.8 };
+	if ((m_nOpnaLfoPhaseInc == 0) || (op.btAm == 0) ||
+		(nAms <= 0) || (nAms >= 4))
+	{
+		return 0;
+	}
+	// AMON only attenuates from the programmed level. Use a unipolar
+	// 0..1 curve so LFO never boosts above TL/EG, then convert dB to
+	// the renderer's 1/256-octave attenuation unit.
+	double dDepth = s_adAmsDb[nAms] * (double)nAmDepth / 1024.0;
+	double dAtten = dDepth * (256.0 / 6.020599913279624);
+	return (int)(dAtten + 0.5);
+}
+
 // compute one operator's output sample (with optional modulation)
 
-int CPC88Opna::RenderFmOperator(SFmOperator& op, int nModulation) {
+int CPC88Opna::RenderFmOperator(SFmOperator& op, int nModulation,
+	int nPmValue, int nAmAtten)
+{
 	// Advance phase accumulator.
-	op.nPhase = (op.nPhase + op.nPhaseInc) & ((1u << FM_PHASE_BITS) - 1u);
+	int64_t nPhaseInc = (int64_t)op.nPhaseInc + (int64_t)nPmValue;
+	if (nPhaseInc < 0) {
+		nPhaseInc = 0;
+	} else if (nPhaseInc >= (1 << FM_PHASE_BITS)) {
+		nPhaseInc = (1 << FM_PHASE_BITS) - 1;
+	}
+	op.nPhase = (op.nPhase + (uint32_t)nPhaseInc) &
+		((1u << FM_PHASE_BITS) - 1u);
 
 	// 10-bit phase index over a full sin period.
 	int nPhaseIdx = (int)(op.nPhase >> (FM_PHASE_BITS - 10));
@@ -3299,7 +3435,8 @@ int CPC88Opna::RenderFmOperator(SFmOperator& op, int nModulation) {
 	//   env << 2   : 0..4092  (function of envelope, 0.094 dB/step)
 	//   tl  << 5   : 0..4064  (function of total level, 0.75 dB/step)
 	// Peak op output = exp[0] = 8192 (when sin/env/tl all 0).
-	int nTotalAtten = nSinLog + (nEffEnv << 2) + ((int)op.btTl << 5);
+	int nTotalAtten =
+		nSinLog + (nEffEnv << 2) + ((int)op.btTl << 5) + nAmAtten;
 	if (nTotalAtten >= (13 << 8)) {
 		// > 13 octaves down (~78 dB) — effectively silent. The exp
 		// table peak of 8192 supports useful values down to ~13
@@ -3321,6 +3458,7 @@ int CPC88Opna::RenderFmOperator(SFmOperator& op, int nModulation) {
 void CPC88Opna::RenderFmStereoSample(int& nLeft, int& nRight) {
 	nLeft = 0;
 	nRight = 0;
+	AdvanceOpnaLfo();
 	for (int nCh = 0; nCh < FM_CHANNEL_COUNT; nCh++) {
 		int nChOut = RenderFmChannel(nCh);
 		if (m_abFmChMute[nCh]) {
@@ -3369,6 +3507,7 @@ void CPC88Opna::RenderFmStereoSample(int& nLeft, int& nRight) {
 int CPC88Opna::RenderFmSample() {
 	int anChOut[FM_CHANNEL_COUNT] = { 0, 0, 0 };
 	int nMix = 0;
+	AdvanceOpnaLfo();
 	for (int nCh = 0; nCh < FM_CHANNEL_COUNT; nCh++) {
 		// Always run RenderFmChannel so envelopes / phase / state stay
 		// coherent across mute toggles. Suppress only the contribution
@@ -3491,6 +3630,20 @@ int CPC88Opna::RenderFmSample() {
 int CPC88Opna::RenderFmChannel(int nChannel) {
 	if ((nChannel < 0) || (nChannel >= FM_CHANNEL_COUNT)) return 0;
 	SFmChannel& ch = m_aFmCh[nChannel];
+	int nLfoValue = 0;
+	int nAmDepth = 0;
+	int anPm[FM_OP_PER_CHANNEL] = { 0, 0, 0, 0 };
+	int anAm[FM_OP_PER_CHANNEL] = { 0, 0, 0, 0 };
+	bool bExpansion = (nChannel >= EXPANSION_FM_CHANNEL_BASE) &&
+		(nChannel < EXPANSION_FM_CHANNEL_BASE + OPNA_FM_CHANNEL_COUNT);
+	if (bExpansion && (m_nOpnaLfoPhaseInc != 0)) {
+		nLfoValue = GetOpnaLfoValue();
+		nAmDepth = GetOpnaLfoAmDepth();
+		for (int nOp = 0; nOp < FM_OP_PER_CHANNEL; nOp++) {
+			anPm[nOp] = ComputeFmLfoPmDelta(ch.aOp[nOp], ch.btPms, nLfoValue);
+			anAm[nOp] = ComputeFmLfoAmAtten(ch.aOp[nOp], ch.btAms, nAmDepth);
+		}
+	}
 
 	// Advance envelopes for all 4 operators of this channel.
 	for (int nOp = 0; nOp < FM_OP_PER_CHANNEL; nOp++) {
@@ -3525,7 +3678,7 @@ int CPC88Opna::RenderFmChannel(int nChannel) {
 
 	// OP1 always uses feedback as its modulation input. We compute it
 	// first because most algorithms feed its output into other ops.
-	nOp1Out = RenderFmOperator(ch.aOp[0], nFbMod);
+	nOp1Out = RenderFmOperator(ch.aOp[0], nFbMod, anPm[0], anAm[0]);
 	// Update feedback history (FIFO of length 2).
 	ch.anFeedback[1] = ch.anFeedback[0];
 	ch.anFeedback[0] = nOp1Out;
@@ -3541,59 +3694,59 @@ int CPC88Opna::RenderFmChannel(int nChannel) {
 	switch (ch.btAlgo) {
 	case 0:
 		// OP1 → OP2 → OP3 → OP4 → out  (serial 4-op)
-		nOp2Out = RenderFmOperator(ch.aOp[1], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo));
-		nOp3Out = RenderFmOperator(ch.aOp[2], ScaleFmModInput(nOp2Out >> 1, ch.btAlgo));
-		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput(nOp3Out >> 1, ch.btAlgo));
+		nOp2Out = RenderFmOperator(ch.aOp[1], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo), anPm[1], anAm[1]);
+		nOp3Out = RenderFmOperator(ch.aOp[2], ScaleFmModInput(nOp2Out >> 1, ch.btAlgo), anPm[2], anAm[2]);
+		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput(nOp3Out >> 1, ch.btAlgo), anPm[3], anAm[3]);
 		nMix = nOp4Out;
 		break;
 	case 1:
 		// (OP1 + OP2) → OP3 → OP4 → out  (parallel mods, serial out)
-		nOp2Out = RenderFmOperator(ch.aOp[1], 0);
-		nOp3Out = RenderFmOperator(ch.aOp[2], ScaleFmModInput((nOp1Out + nOp2Out) >> 1, ch.btAlgo));
-		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput(nOp3Out >> 1, ch.btAlgo));
+		nOp2Out = RenderFmOperator(ch.aOp[1], 0, anPm[1], anAm[1]);
+		nOp3Out = RenderFmOperator(ch.aOp[2], ScaleFmModInput((nOp1Out + nOp2Out) >> 1, ch.btAlgo), anPm[2], anAm[2]);
+		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput(nOp3Out >> 1, ch.btAlgo), anPm[3], anAm[3]);
 		nMix = nOp4Out;
 		break;
 	case 2:
 		// (OP1 + (OP2 → OP3)) → OP4 → out
-		nOp2Out = RenderFmOperator(ch.aOp[1], 0);
-		nOp3Out = RenderFmOperator(ch.aOp[2], ScaleFmModInput(nOp2Out >> 1, ch.btAlgo));
-		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput((nOp1Out + nOp3Out) >> 1, ch.btAlgo));
+		nOp2Out = RenderFmOperator(ch.aOp[1], 0, anPm[1], anAm[1]);
+		nOp3Out = RenderFmOperator(ch.aOp[2], ScaleFmModInput(nOp2Out >> 1, ch.btAlgo), anPm[2], anAm[2]);
+		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput((nOp1Out + nOp3Out) >> 1, ch.btAlgo), anPm[3], anAm[3]);
 		nMix = nOp4Out;
 		break;
 	case 3:
 		// ((OP1 → OP2) + OP3) → OP4 → out
-		nOp2Out = RenderFmOperator(ch.aOp[1], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo));
-		nOp3Out = RenderFmOperator(ch.aOp[2], 0);
-		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput((nOp2Out + nOp3Out) >> 1, ch.btAlgo));
+		nOp2Out = RenderFmOperator(ch.aOp[1], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo), anPm[1], anAm[1]);
+		nOp3Out = RenderFmOperator(ch.aOp[2], 0, anPm[2], anAm[2]);
+		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput((nOp2Out + nOp3Out) >> 1, ch.btAlgo), anPm[3], anAm[3]);
 		nMix = nOp4Out;
 		break;
 	case 4:
 		// (OP1 → OP2☆) + (OP3 → OP4☆)  (two 2-op chains, both heard)
-		nOp2Out = RenderFmOperator(ch.aOp[1], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo));
-		nOp3Out = RenderFmOperator(ch.aOp[2], 0);
-		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput(nOp3Out >> 1, ch.btAlgo));
+		nOp2Out = RenderFmOperator(ch.aOp[1], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo), anPm[1], anAm[1]);
+		nOp3Out = RenderFmOperator(ch.aOp[2], 0, anPm[2], anAm[2]);
+		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput(nOp3Out >> 1, ch.btAlgo), anPm[3], anAm[3]);
 		nMix = nOp2Out + nOp4Out;
 		break;
 	case 5:
 		// OP1 → {OP2☆, OP3☆, OP4☆}  (1 modulator, 3 carriers)
-		nOp2Out = RenderFmOperator(ch.aOp[1], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo));
-		nOp3Out = RenderFmOperator(ch.aOp[2], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo));
-		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo));
+		nOp2Out = RenderFmOperator(ch.aOp[1], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo), anPm[1], anAm[1]);
+		nOp3Out = RenderFmOperator(ch.aOp[2], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo), anPm[2], anAm[2]);
+		nOp4Out = RenderFmOperator(ch.aOp[3], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo), anPm[3], anAm[3]);
 		nMix = nOp2Out + nOp3Out + nOp4Out;
 		break;
 	case 6:
 		// (OP1 → OP2☆) + OP3☆ + OP4☆
-		nOp2Out = RenderFmOperator(ch.aOp[1], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo));
-		nOp3Out = RenderFmOperator(ch.aOp[2], 0);
-		nOp4Out = RenderFmOperator(ch.aOp[3], 0);
+		nOp2Out = RenderFmOperator(ch.aOp[1], ScaleFmModInput(nOp1Out >> 1, ch.btAlgo), anPm[1], anAm[1]);
+		nOp3Out = RenderFmOperator(ch.aOp[2], 0, anPm[2], anAm[2]);
+		nOp4Out = RenderFmOperator(ch.aOp[3], 0, anPm[3], anAm[3]);
 		nMix = nOp2Out + nOp3Out + nOp4Out;
 		break;
 	case 7:
 	default:
 		// OP1☆ + OP2☆ + OP3☆ + OP4☆  (4 carriers, additive)
-		nOp2Out = RenderFmOperator(ch.aOp[1], 0);
-		nOp3Out = RenderFmOperator(ch.aOp[2], 0);
-		nOp4Out = RenderFmOperator(ch.aOp[3], 0);
+		nOp2Out = RenderFmOperator(ch.aOp[1], 0, anPm[1], anAm[1]);
+		nOp3Out = RenderFmOperator(ch.aOp[2], 0, anPm[2], anAm[2]);
+		nOp4Out = RenderFmOperator(ch.aOp[3], 0, anPm[3], anAm[3]);
 		nMix = nOp1Out + nOp2Out + nOp3Out + nOp4Out;
 		break;
 	}

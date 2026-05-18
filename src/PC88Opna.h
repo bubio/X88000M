@@ -68,7 +68,9 @@ public:
 		// is the 2-bit detune magnitude (sign handled separately).
 		FM_DT_BLOCKS = 8,
 		FM_DT_NOTES  = 4,
-		FM_DT_FDS    = 4
+		FM_DT_FDS    = 4,
+		FM_LFO_TABLE_SIZE = 1024,
+		FM_LFO_PHASE_BITS = 24
 	};
 	enum {
 		RHYTHM_CHANNEL_COUNT = 6
@@ -279,6 +281,7 @@ protected:
 		uint8_t  btKs;             // 0..3
 		uint8_t  btMul;            // 0..15
 		uint8_t  btDt;             // 0..7 (3-bit signed-magnitude detune)
+		uint8_t  btAm;             // 0/1 (OPNA LFO amplitude modulation enable)
 		bool     bKeyOn;
 		// SSG-type Envelope Control ($90-$9E, manual section 2-5-2).
 		// btSsgEg holds the low nibble of $90:
@@ -309,6 +312,8 @@ protected:
 		uint8_t  btAlgo;           // 0..7
 		uint8_t  btFb;             // 0..7 (OP1 self-feedback amount)
 		uint8_t  btPan;            // bit7=L, bit6=R (OPNA $B4-$B6)
+		uint8_t  btAms;            // 0..3 (OPNA amplitude modulation sensitivity)
+		uint8_t  btPms;            // 0..7 (OPNA phase modulation sensitivity)
 			// OP1 self-feedback history. Two samples averaged into the OP1
 			// phase modulation input on the next sample.
 			int      anFeedback[2];
@@ -368,12 +373,16 @@ protected:
 	static int m_anFmSinTable[FM_SIN_TABLE_SIZE];      // 1/4 period, log domain
 	static int m_anFmExpTable[FM_EXP_TABLE_SIZE];      // log → linear conversion
 	static int m_anFmEnvRateTable[FM_ENV_RATE_TABLE_SIZE]; // rate → counter inc per sample
+	static int m_anFmLfoSinTable[FM_LFO_TABLE_SIZE];   // -1024..+1024 sine LFO
 	// Detune phase increment lookup, populated by UpdateFmTickRate
 	// from a milli-Hz constant table (Table 2-6 of the YM2608
 	// application manual). Indexed by [BLOCK][NOTE][FD] and stored as
 	// a per-output-sample phase increment offset (positive; sign is
 	// applied at runtime from the DT field's bit 2).
 	static int m_anFmDetunePhaseInc[FM_DT_BLOCKS][FM_DT_NOTES][FM_DT_FDS];
+	static uint8_t m_btOpnaLfoControl;
+	static uint32_t m_nOpnaLfoPhase;
+	static uint32_t m_nOpnaLfoPhaseInc;
 
 	struct SRhythmSample {
 		std::vector<int16_t> vSamples;
@@ -629,7 +638,8 @@ protected:
 	// previous operator's linear output, suitably shifted).
 	// Returns a signed linear sample roughly in [-FM_OP_MAX_LINEAR,
 	// +FM_OP_MAX_LINEAR].
-	static int RenderFmOperator(SFmOperator& op, int nModulation);
+	static int RenderFmOperator(SFmOperator& op, int nModulation,
+		int nPmValue, int nAmAtten);
 	// Advance one operator's envelope state machine by one sample.
 	// nKsr is the precomputed key-scaling rate offset (0..3) for this
 	// operator's current channel pitch.
@@ -650,6 +660,12 @@ protected:
 	// Render one mono FM sample by mixing all 3 channels.
 	static int RenderFmSample();
 	static void RenderFmStereoSample(int& nLeft, int& nRight);
+	static void UpdateOpnaLfoPhaseInc();
+	static void AdvanceOpnaLfo();
+	static int GetOpnaLfoValue();
+	static int GetOpnaLfoAmDepth();
+	static int ComputeFmLfoPmDelta(const SFmOperator& op, int nPms, int nLfoValue);
+	static int ComputeFmLfoAmAtten(const SFmOperator& op, int nAms, int nAmDepth);
 	static void LoadRhythmSamples();
 	static bool LoadOneRhythmSample(const char* pszName, SRhythmSample& smp);
 	static void OnRhythmRegisterWrite(int nAddress, uint8_t btData);
