@@ -1711,13 +1711,10 @@ void CPC88Opna::AdvanceSampleAccumulator(int nClock) {
 }
 
 ////////////////////////////////////////////////////////////
-// Phase C-FM: YM2203 FM synthesis (Phase C-FM-1: scaffolding only)
+// Phase C-FM: YM2203/YM2608 FM synthesis.
 //
-// This stage adds the data structures, lookup tables, and register
-// dispatch needed by the FM section. NO audio is produced yet — the
-// state is updated correctly from incoming register writes, but
-// Generate() does not yet mix the FM channels into its output.
-// Phase C-FM-2 will add the actual phase generator + envelope output.
+// The renderer keeps all FM operator/channel state here and mixes
+// YM2203 channels plus YM2608 extension channels through Generate().
 
 // build sin / exp / envelope rate / detune tables from formulas
 
