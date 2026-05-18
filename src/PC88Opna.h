@@ -74,6 +74,9 @@ public:
 		RHYTHM_CHANNEL_COUNT = 6
 	};
 	enum {
+		ADPCM_MEMORY_SIZE = 256 * 1024
+	};
+	enum {
 		SOUNDBOARD_NONE = 0,
 		SOUNDBOARD_OPN,
 		SOUNDBOARD_OPNA,
@@ -130,6 +133,27 @@ protected:
 	static int m_nTimerBCounterMax;
 	// OPNA interrupt requested
 	static bool m_bOpnaInterruptRequest;
+
+	struct STimerState {
+		uint8_t btStatus;
+		bool bTimerAActive;
+		bool bTimerASetFlag;
+		int nTimerAValue;
+		int nTimerACounter;
+		int nTimerACounterMax;
+		bool bTimerBActive;
+		bool bTimerBSetFlag;
+		int nTimerBValue;
+		int nTimerBCounter;
+		int nTimerBCounterMax;
+		int nPreScalerFM;
+		int nPreScalerPSG;
+		int nCh3Mode;
+		bool bFmCh3SpecialMode;
+		bool bCsmKeyState;
+	};
+	static STimerState m_timerInternalOpn;
+	static STimerState m_timerExpansionOpna;
 
 	// interrupt vector change callback function
 	static IntVectChangeCallback m_pIntVectChangeCallback;
@@ -213,6 +237,27 @@ protected:
 	static int m_anSsgVolTable[SSG_VOL_TABLE_SIZE];   // 16 levels, 3 dB/step
 	static int m_anSsgEnvTable[SSG_ENV_TABLE_SIZE];   // 32 levels, 1.5 dB/step
 
+	struct SSsgState {
+		int nTickAccumX16;
+		int anTonePeriod[SSG_CHANNEL_COUNT];
+		int anToneCounter[SSG_CHANNEL_COUNT];
+		int anToneState[SSG_CHANNEL_COUNT];
+		int nNoisePeriod;
+		int nNoiseCounter;
+		uint32_t nNoiseLfsr;
+		int nNoiseState;
+		int nEnvPeriod;
+		int nEnvCounter;
+		int nEnvLevel;
+		int nEnvDir;
+		bool bEnvHolding;
+		int anVolume[SSG_CHANNEL_COUNT];
+		bool abUseEnv[SSG_CHANNEL_COUNT];
+		uint8_t btMixer;
+	};
+	static SSsgState m_ssgInternalOpn;
+	static SSsgState m_ssgExpansionOpna;
+
 	// ----- FM (YM2203) synthesis state (Phase C-FM) -----
 	//
 	// One SFmOperator per slot (4 ops × 3 channels = 12 active ops). All
@@ -252,7 +297,7 @@ protected:
 		int      nOutPrev;
 	};
 
-	struct SFmChannel {
+		struct SFmChannel {
 		// Operator array, indexed by physical operator number 0..3
 		// (= OP1..OP4 in 1-based notation). The 1-3-2-4 slot layout in
 		// the register space is unwound by the dispatch in
@@ -264,9 +309,15 @@ protected:
 		uint8_t  btAlgo;           // 0..7
 		uint8_t  btFb;             // 0..7 (OP1 self-feedback amount)
 		uint8_t  btPan;            // bit7=L, bit6=R (OPNA $B4-$B6)
-		// OP1 self-feedback history. Two samples averaged into the OP1
-		// phase modulation input on the next sample.
-		int      anFeedback[2];
+			// OP1 self-feedback history. Two samples averaged into the OP1
+			// phase modulation input on the next sample.
+			int      anFeedback[2];
+			// Per-channel FM clock scale. OPN and OPNA can have independent
+			// prescaler state when both devices are installed.
+			int      nFmPhaseScaleX16;
+			// CH3/CH6 special mode is a chip-local mode; keep it on the
+			// affected channel instead of using one global flag.
+			int      nSpecialMode;
 		// CH3 special mode storage (only used by ch[2]).
 		// op0/op1/op2 use these per-operator F-Number/Block values when
 		// special mode is active. op3 always uses wFnum/btBlock above.
@@ -279,11 +330,7 @@ protected:
 	// value enables it; we don't distinguish between the three sub-modes
 	// because they only differ in trigger semantics on real hardware).
 	static bool m_bFmCh3SpecialMode;
-	// CSM (CH3 mode 2) auto-key state. Each Timer A overflow flips
-	// this; on a 0->1 edge we trigger an ATTACK on all CH3 operators,
-	// on a 1->0 edge we trigger a RELEASE. The result is an
-	// ATTACK/RELEASE oscillation at half the Timer A frequency, which
-	// is the formant-modulation behaviour CSM-using titles depend on.
+	// CSM (CH3 mode 1) auto-key state.
 	static bool m_bCsmKeyState;
 
 	// F-Number high latch. The YM2203 implements F-Num/Block as two
@@ -330,6 +377,7 @@ protected:
 
 	struct SRhythmSample {
 		std::vector<int16_t> vSamples;
+		std::vector<int16_t> vSamplesRight;
 		int nSampleRate;
 	};
 	struct SRhythmVoice {
@@ -343,6 +391,42 @@ protected:
 	static SRhythmVoice  m_aRhythmVoice[RHYTHM_CHANNEL_COUNT];
 	static bool m_bRhythmSamplesLoaded;
 	static uint8_t m_btRhythmTotalLevel;
+
+	struct SAdpcmState {
+		std::vector<uint8_t> vMemory;
+		std::vector<uint8_t> vCpuFifo;
+		uint8_t btControl1;
+		uint8_t btControl2;
+		uint8_t btFlagControl;
+		uint8_t btStatus;
+		uint32_t nStartAddr;
+		uint32_t nStopAddr;
+		uint32_t nLimitAddr;
+		uint32_t nCurrentAddr;
+		uint32_t nStepX16;
+		uint32_t nAccumX16;
+		int nPredictor;
+		int nDelta;
+		int nPreviousSample;
+		int nCurrentSample;
+		int nLastOutputSample;
+		int nFadeSample;
+		int nFadeCounter;
+		int nFadeTotal;
+		uint8_t btDecodeByte;
+		bool bPlaying;
+		bool bExternal;
+		bool bMemoryWrite;
+		bool bMemoryRead;
+		bool bHighNibble;
+		bool bCpuStream;
+		bool bEndAfterByte;
+		bool bTransferEnded;
+		bool bTransferStarted;
+		bool bHaveCurrentSample;
+	};
+		static SAdpcmState m_adpcm;
+		static uint8_t m_abtAdpcmRegisters[0x11];
 
 public:
 	// get base clock
@@ -457,15 +541,20 @@ protected:
 public:
 	// pass clock
 	static void PassClock(int nClock) {
-		if (m_bTimerAAcvive) {
-			if ((m_nTimerACounter -= nClock) <= 0) {
-				TimerAOverFlow();
-			}
+		if (m_nSoundBoardMode == SOUNDBOARD_OPN ||
+			m_nSoundBoardMode == SOUNDBOARD_OPN_OPNA)
+		{
+				AdvanceTimerState(m_timerInternalOpn, nClock, false);
 		}
-		if (m_bTimerBAcvive) {
-			if ((m_nTimerBCounter -= nClock) <= 0) {
-				TimerBOverFlow();
-			}
+		if (m_nSoundBoardMode == SOUNDBOARD_OPNA ||
+			m_nSoundBoardMode == SOUNDBOARD_OPN_OPNA)
+		{
+				AdvanceTimerState(m_timerExpansionOpna, nClock, true);
+		}
+		if (m_nSoundBoardMode == SOUNDBOARD_OPNA) {
+			LoadTimerState(m_timerExpansionOpna);
+		} else {
+			LoadTimerState(m_timerInternalOpn);
 		}
 		// Phase C-準備: sample-rate conversion accumulator. Each Z80
 		// cycle nudges the fractional sample position; once we have
@@ -508,7 +597,9 @@ protected:
 	static void ResetFmState();
 	// Recompute the FM ticks-per-output-sample ratio whenever base
 	// clock, prescaler_fm, or sample rate changes.
-	static void UpdateFmTickRate();
+		static void UpdateFmTickRate();
+		static void ApplyFmClockToChannels(int nChannelBase, int nChannelCount);
+		static int ComputeFmPhaseScaleX16();
 	// Recompute one operator's nPhaseInc from the channel's F-number,
 	// block, MUL, and DT values. Called whenever any of those change.
 	static void RecomputeFmOperatorPhaseInc(int nChannel, int nOpIndex);
@@ -526,8 +617,8 @@ protected:
 	static void OnFmKeyOnOffAt(int nChannelBase, int nChannelCount,
 		uint8_t btData);
 	// CSM trigger: forced key-on edge on all 4 operators of CH3,
-	// invoked from Timer A overflow when CH3 mode == 2 (CSM).
-	static void OnCsmKeyTrigger();
+	// invoked from Timer A overflow when CH3 mode == 1 (CSM).
+	static void OnCsmKeyTrigger(int nChannelBase);
 	// Map an address in $30–$9E to (channel, op_index_0_based) using
 	// the YM-family 1-3-2-4 slot order. Returns false if the address
 	// targets the unused slot column (channel 3 / op4 of an absent
@@ -563,14 +654,43 @@ protected:
 	static bool LoadOneRhythmSample(const char* pszName, SRhythmSample& smp);
 	static void OnRhythmRegisterWrite(int nAddress, uint8_t btData);
 	static void RenderRhythmStereoSample(int& nLeft, int& nRight);
+	static void ResetAdpcmState();
+	static uint8_t ReadAdpcmStatus();
+	static uint8_t ReadAdpcmData();
+	static void WriteAdpcmRegister(int nAddress, uint8_t btData);
+	static void RenderAdpcmStereoSample(int& nLeft, int& nRight);
+	static void UpdateAdpcmAddresses();
+	static void UpdateAdpcmStep();
+	static void StartAdpcmPlayback(bool bExternal);
+	static void StopAdpcmPlayback(bool bSetEos);
+	static void ResetAdpcmDecoder();
+	static void AdvanceAdpcmAddress();
+	static bool FetchNextAdpcmByte(uint8_t& btData);
+	static bool DecodeNextAdpcmSample(int& nSample);
+	static bool PrimeAdpcmInterpolator();
+	static void DecodeAdpcmNibble(uint8_t btNibble);
+	static void SetAdpcmStatusFlag(uint8_t btFlag);
+	static void ClearAdpcmStatusFlag(uint8_t btFlag);
+	static void RefreshInterruptRequest();
+	static void LoadTimerState(const STimerState& state);
+	static void SaveTimerState(STimerState& state);
+	static void ResetTimerState(STimerState& state);
+		static void AdvanceTimerState(STimerState& state, int nClock, bool bExpansion);
+	static void WriteTimerDeviceRegister(bool bExpansion, int nAddress, uint8_t btData);
+	static void LoadSsgState(const SSsgState& state);
+	static void SaveSsgState(SSsgState& state);
+	static void ResetSsgState(SSsgState& state);
+	static int RenderSsgDevice(bool bExpansion);
+	static void WriteSsgDeviceRegister(bool bExpansion, int nAddress, uint8_t btData);
+	static void CopyLowerRegisters(uint8_t* pDst, const uint8_t* pSrc);
 	static void WriteLowerDataForTargets(uint8_t btData,
 		bool bInternalOpn, bool bExpansionOpna);
 
 public:
 	// timer A overflow
-	static void TimerAOverFlow();
+		static void TimerAOverFlow(bool bExpansion);
 	// timer B overflow
-	static void TimerBOverFlow();
+		static void TimerBOverFlow();
 	// set timer A counter max value
 	static void SetTimerACounterMax();
 	// set timer B counter max value
@@ -580,7 +700,10 @@ public:
 	// read status
 	static uint8_t ReadStatus() {
 		if (m_nSoundBoardMode == SOUNDBOARD_NONE) return 0xFF;
-		return m_btStatus;
+		if (m_nSoundBoardMode == SOUNDBOARD_OPNA) {
+			return m_timerExpansionOpna.btStatus;
+		}
+		return m_timerInternalOpn.btStatus;
 	}
 	// read data
 	static uint8_t ReadData();
