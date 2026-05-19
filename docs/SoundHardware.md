@@ -479,8 +479,8 @@ YM2149 データシートには `f_envelope = fc / (256 × EP)` という式が�
 `$27` のビット 6/7 で CH3 を「特殊モード」にすると、CH3 の 4 オペレータそれぞれに**異なる F-Number / BLOCK** を与えられるようになります。これにより不協和な倍音や非整数比の音色を作ることができます。
 
 - `$27` D7,D6 = `00`: 通常モード
-- `$27` D7,D6 = `01`: CSM。Timer A overflow ごとに CH3 を自動 key-on する
-- `$27` D7,D6 = `10` / `11`: effect sound mode。オペレータ別 F-Number は使うが、CSM の Timer A 自動 key-on は行わない
+- `$27` D7,D6 = `01`: effect sound mode。オペレータ別 F-Number は使うが、CSM の Timer A 自動 key-on は行わない
+- `$27` D7,D6 = `10` / `11`: CSM。Timer A overflow ごとに CH3 を自動 key-on する
 - 通常モード: CH3 の全 4 オペレータは `$A2` (低位) / `$A6` (高位) で同じ F-Number を共有
 - 特殊モード:
   - OP4 → `$A2` / `$A6` (通常の場所)

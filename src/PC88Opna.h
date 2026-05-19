@@ -335,7 +335,7 @@ protected:
 	// value enables it; we don't distinguish between the three sub-modes
 	// because they only differ in trigger semantics on real hardware).
 	static bool m_bFmCh3SpecialMode;
-	// CSM (CH3 mode 1) auto-key state.
+	// CSM (CH3 mode D7) auto-key state.
 	static bool m_bCsmKeyState;
 
 	// F-Number high latch. The YM2203 implements F-Num/Block as two
@@ -630,7 +630,7 @@ protected:
 	static void OnFmKeyOnOffAt(int nChannelBase, int nChannelCount,
 		uint8_t btData);
 	// CSM trigger: forced key-on edge on all 4 operators of CH3,
-	// invoked from Timer A overflow when CH3 mode == 1 (CSM).
+	// invoked from Timer A overflow when CH3 mode D7 is set (CSM).
 	static void OnCsmKeyTrigger(int nChannelBase);
 	// Map an address in $30–$9E to (channel, op_index_0_based) using
 	// the YM-family 1-3-2-4 slot order. Returns false if the address

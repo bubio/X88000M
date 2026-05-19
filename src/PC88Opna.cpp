@@ -661,7 +661,7 @@ void CPC88Opna::WriteTimerDeviceRegister(bool bExpansion, int nAddress,
 		}
 		{
 			int nNewMode = (btData >> 6) & 0x03;
-			if (nNewMode != 1) {
+			if ((nNewMode & 0x02) == 0) {
 				m_bCsmKeyState = false;
 			}
 			m_nCh3Mode = nNewMode;
@@ -814,11 +814,11 @@ void CPC88Opna::TimerAOverFlow(bool bExpansion) {
 			m_btStatus |= 0x01;
 		}
 	}
-	// CH3 mode 1 = CSM: every Timer A overflow forces a
+	// CH3 mode D7 = CSM: every Timer A overflow forces a
 	// key-on retrigger on all four operators of CH3 regardless of
 	// their current $28 key state. This is what drives speech-style
 	// formant synthesis (Sorcerian opening, Xanadu II demo, etc.).
-	if (m_nCh3Mode == 1) {
+	if ((m_nCh3Mode & 0x02) != 0) {
 		OnCsmKeyTrigger(bExpansion? EXPANSION_FM_CHANNEL_BASE:
 			INTERNAL_FM_CHANNEL_BASE);
 	}
@@ -2427,7 +2427,7 @@ void CPC88Opna::OnFmKeyOnOffAt(int nChannelBase, int nChannelCount,
 	}
 }
 
-// CSM (CH3 mode 1) auto key trigger from Timer A overflow.
+// CSM (CH3 mode D7) auto key trigger from Timer A overflow.
 //
 // Per the YM2203/YM2608 spec (and verified against the reference
 // write-up at mydocuments.g2.xrea.com/html/p8/csm_voice.html):
