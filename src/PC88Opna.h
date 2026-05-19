@@ -24,6 +24,7 @@ public:
 	//   nFrames  : number of stereo frames in pSamples
 	typedef void (*SampleOutputCallback)(
 		const int16_t* pSamples, int nFrames);
+	typedef FILE* (*SystemFileOpenCallback)(const std::string& strName);
 
 // enum
 public:
@@ -31,9 +32,10 @@ public:
 	enum {
 		INTERRUPT_BIT = 0x10
 	};
-	// register space size (YM2203 register addresses are 8-bit)
+	// register space size (YM2608 has two 8-bit register pages)
 	enum {
-		REGISTER_COUNT = 0x100
+		REGISTER_PAGE_COUNT = 2,
+		REGISTER_COUNT = 0x200
 	};
 	// SSG (PSG) constants
 	enum {
@@ -41,11 +43,17 @@ public:
 		SSG_VOL_TABLE_SIZE = 16,
 		SSG_ENV_TABLE_SIZE = 32
 	};
-	// FM (YM2203) constants
+	// FM constants. The renderer reserves channels as:
+	//   0..2: internal YM2203-compatible OPN
+	//   3..8: expansion YM2608-compatible OPNA
 	enum {
-		FM_CHANNEL_COUNT  = 3,
+		INTERNAL_FM_CHANNEL_BASE = 0,
+		EXPANSION_FM_CHANNEL_BASE = 3,
+		OPN_FM_CHANNEL_COUNT = 3,
+		OPNA_FM_CHANNEL_COUNT = 6,
+		FM_CHANNEL_COUNT  = INTERNAL_FM_CHANNEL_BASE + OPN_FM_CHANNEL_COUNT + OPNA_FM_CHANNEL_COUNT,
 		FM_OP_PER_CHANNEL = 4,
-		FM_OPERATOR_COUNT = FM_CHANNEL_COUNT * FM_OP_PER_CHANNEL,  // 12
+		FM_OPERATOR_COUNT = FM_CHANNEL_COUNT * FM_OP_PER_CHANNEL,
 		// Phase accumulator: 20 fractional bits over a full sin period.
 		// Top bits index the sin table after taking the upper portion.
 		FM_PHASE_BITS     = 20,
@@ -60,7 +68,21 @@ public:
 		// is the 2-bit detune magnitude (sign handled separately).
 		FM_DT_BLOCKS = 8,
 		FM_DT_NOTES  = 4,
-		FM_DT_FDS    = 4
+		FM_DT_FDS    = 4,
+		FM_LFO_TABLE_SIZE = 1024,
+		FM_LFO_PHASE_BITS = 24
+	};
+	enum {
+		RHYTHM_CHANNEL_COUNT = 6
+	};
+	enum {
+		ADPCM_MEMORY_SIZE = 256 * 1024
+	};
+	enum {
+		SOUNDBOARD_NONE = 0,
+		SOUNDBOARD_OPN,
+		SOUNDBOARD_OPNA,
+		SOUNDBOARD_OPN_OPNA
 	};
 	// FM envelope generator state values
 	enum {
@@ -79,6 +101,12 @@ protected:
 	static uint8_t m_btStatus;
 	// address
 	static int m_nAddress;
+	static int m_anAddress[REGISTER_PAGE_COUNT];
+	static int m_nSoundBoard2Address;
+	static int m_nSoundBoard2AddressUpper;
+	static bool m_bSoundBoard2InterruptMask;
+	static int m_nWritePage;
+	static int m_nWriteChannelBase;
 	// CH3 mode
 	static int m_nCh3Mode;
 	// FM synthesis pre-scaler
@@ -108,6 +136,27 @@ protected:
 	// OPNA interrupt requested
 	static bool m_bOpnaInterruptRequest;
 
+	struct STimerState {
+		uint8_t btStatus;
+		bool bTimerAActive;
+		bool bTimerASetFlag;
+		int nTimerAValue;
+		int nTimerACounter;
+		int nTimerACounterMax;
+		bool bTimerBActive;
+		bool bTimerBSetFlag;
+		int nTimerBValue;
+		int nTimerBCounter;
+		int nTimerBCounterMax;
+		int nPreScalerFM;
+		int nPreScalerPSG;
+		int nCh3Mode;
+		bool bFmCh3SpecialMode;
+		bool bCsmKeyState;
+	};
+	static STimerState m_timerInternalOpn;
+	static STimerState m_timerExpansionOpna;
+
 	// interrupt vector change callback function
 	static IntVectChangeCallback m_pIntVectChangeCallback;
 
@@ -118,6 +167,9 @@ protected:
 	// dedicated members above; the mirror keeps a copy too so debugging
 	// and full-state dumps work uniformly.
 	static uint8_t m_abtRegisters[REGISTER_COUNT];
+	static uint8_t m_abtSoundBoard2Registers[REGISTER_COUNT];
+	static int m_nSoundBoardMode;
+	static SystemFileOpenCallback m_pSystemFileOpenCallback;
 
 	// Output sample rate in Hz (set by the frontend before Reset()).
 	static int m_nSampleRate;
@@ -132,13 +184,16 @@ protected:
 	// Sample output callback (set by the frontend; may be NULL).
 	static SampleOutputCallback m_pSampleOutputCallback;
 	// Total generated output frames since Reset(). Used by the optional
-	// YM2203 register logger so replay tools can align writes to audio
+	// OPN/OPNA register logger so replay tools can align writes to audio
 	// sample positions without depending on CPU timing details.
 	static long long m_nRenderedFrames;
 
 	// Per-section mute (Debug menu — Generate() still updates state).
 	static bool m_bFmMute;
 	static bool m_bSsgMute;
+	static bool m_bInternalOpnMute;
+	static bool m_bExpansionOpnaMute;
+	static bool m_bRhythmMute;
 	// Per-channel mute (Debug menu). Indexed by 0..2.
 	// State is still advanced — only the contribution to the output
 	// sample is suppressed, so timers / envelopes / phase accumulators
@@ -149,7 +204,7 @@ protected:
 	// ----- SSG (PSG) synthesis state (Phase C-SSG) -----
 	// SSG internal counters advance at base_clock / prescaler_psg / 4,
 	// which is about 250 kHz for the typical PC-8801 configuration.
-	// (See docs/YM2203.md for the rationale — the literal "fc/16" in
+	// (See docs/SoundHardware.md for the rationale — the literal "fc/16" in
 	// the YM2149 datasheet refers to the full waveform period
 	// multiplier, not the per-tick divider.) The fractional
 	// accumulator tracks how many internal SSG ticks should fire per
@@ -184,6 +239,27 @@ protected:
 	static int m_anSsgVolTable[SSG_VOL_TABLE_SIZE];   // 16 levels, 3 dB/step
 	static int m_anSsgEnvTable[SSG_ENV_TABLE_SIZE];   // 32 levels, 1.5 dB/step
 
+	struct SSsgState {
+		int nTickAccumX16;
+		int anTonePeriod[SSG_CHANNEL_COUNT];
+		int anToneCounter[SSG_CHANNEL_COUNT];
+		int anToneState[SSG_CHANNEL_COUNT];
+		int nNoisePeriod;
+		int nNoiseCounter;
+		uint32_t nNoiseLfsr;
+		int nNoiseState;
+		int nEnvPeriod;
+		int nEnvCounter;
+		int nEnvLevel;
+		int nEnvDir;
+		bool bEnvHolding;
+		int anVolume[SSG_CHANNEL_COUNT];
+		bool abUseEnv[SSG_CHANNEL_COUNT];
+		uint8_t btMixer;
+	};
+	static SSsgState m_ssgInternalOpn;
+	static SSsgState m_ssgExpansionOpna;
+
 	// ----- FM (YM2203) synthesis state (Phase C-FM) -----
 	//
 	// One SFmOperator per slot (4 ops × 3 channels = 12 active ops). All
@@ -205,6 +281,7 @@ protected:
 		uint8_t  btKs;             // 0..3
 		uint8_t  btMul;            // 0..15
 		uint8_t  btDt;             // 0..7 (3-bit signed-magnitude detune)
+		uint8_t  btAm;             // 0/1 (OPNA LFO amplitude modulation enable)
 		bool     bKeyOn;
 		// SSG-type Envelope Control ($90-$9E, manual section 2-5-2).
 		// btSsgEg holds the low nibble of $90:
@@ -223,7 +300,7 @@ protected:
 		int      nOutPrev;
 	};
 
-	struct SFmChannel {
+		struct SFmChannel {
 		// Operator array, indexed by physical operator number 0..3
 		// (= OP1..OP4 in 1-based notation). The 1-3-2-4 slot layout in
 		// the register space is unwound by the dispatch in
@@ -234,9 +311,18 @@ protected:
 		uint8_t  btBlock;          // 0..7
 		uint8_t  btAlgo;           // 0..7
 		uint8_t  btFb;             // 0..7 (OP1 self-feedback amount)
-		// OP1 self-feedback history. Two samples averaged into the OP1
-		// phase modulation input on the next sample.
-		int      anFeedback[2];
+		uint8_t  btPan;            // bit7=L, bit6=R (OPNA $B4-$B6)
+		uint8_t  btAms;            // 0..3 (OPNA amplitude modulation sensitivity)
+		uint8_t  btPms;            // 0..7 (OPNA phase modulation sensitivity)
+			// OP1 self-feedback history. Two samples averaged into the OP1
+			// phase modulation input on the next sample.
+			int      anFeedback[2];
+			// Per-channel FM clock scale. OPN and OPNA can have independent
+			// prescaler state when both devices are installed.
+			int      nFmPhaseScaleX16;
+			// CH3/CH6 special mode is a chip-local mode; keep it on the
+			// affected channel instead of using one global flag.
+			int      nSpecialMode;
 		// CH3 special mode storage (only used by ch[2]).
 		// op0/op1/op2 use these per-operator F-Number/Block values when
 		// special mode is active. op3 always uses wFnum/btBlock above.
@@ -249,11 +335,7 @@ protected:
 	// value enables it; we don't distinguish between the three sub-modes
 	// because they only differ in trigger semantics on real hardware).
 	static bool m_bFmCh3SpecialMode;
-	// CSM (CH3 mode 2) auto-key state. Each Timer A overflow flips
-	// this; on a 0->1 edge we trigger an ATTACK on all CH3 operators,
-	// on a 1->0 edge we trigger a RELEASE. The result is an
-	// ATTACK/RELEASE oscillation at half the Timer A frequency, which
-	// is the formant-modulation behaviour CSM-using titles depend on.
+	// CSM (CH3 mode 1) auto-key state.
 	static bool m_bCsmKeyState;
 
 	// F-Number high latch. The YM2203 implements F-Num/Block as two
@@ -264,7 +346,7 @@ protected:
 	// to commit. We mirror this so that interleaved writes don't
 	// produce a momentarily wrong phase increment.
 	static uint8_t m_abtFmFnumLatch[FM_CHANNEL_COUNT];   // BLOCK<<3 | FNUM[10:8]
-	static uint8_t m_abtFmCh3FnumLatch[3];               // CH3 special, OP1..OP3
+	static uint8_t m_abtFmCh3FnumLatch[FM_CHANNEL_COUNT][3]; // CH3/CH6 special, OP1..OP3
 
 	// FM section internal clock conversion. The FM section advances at
 	// master_clock / (prescaler_fm * 6) Hz; we accumulate Z80-cycle
@@ -291,12 +373,70 @@ protected:
 	static int m_anFmSinTable[FM_SIN_TABLE_SIZE];      // 1/4 period, log domain
 	static int m_anFmExpTable[FM_EXP_TABLE_SIZE];      // log → linear conversion
 	static int m_anFmEnvRateTable[FM_ENV_RATE_TABLE_SIZE]; // rate → counter inc per sample
+	static int m_anFmLfoSinTable[FM_LFO_TABLE_SIZE];   // -1024..+1024 sine LFO
 	// Detune phase increment lookup, populated by UpdateFmTickRate
 	// from a milli-Hz constant table (Table 2-6 of the YM2608
 	// application manual). Indexed by [BLOCK][NOTE][FD] and stored as
 	// a per-output-sample phase increment offset (positive; sign is
 	// applied at runtime from the DT field's bit 2).
 	static int m_anFmDetunePhaseInc[FM_DT_BLOCKS][FM_DT_NOTES][FM_DT_FDS];
+	static uint8_t m_btOpnaLfoControl;
+	static uint32_t m_nOpnaLfoPhase;
+	static uint32_t m_nOpnaLfoPhaseInc;
+
+	struct SRhythmSample {
+		std::vector<int16_t> vSamples;
+		std::vector<int16_t> vSamplesRight;
+		int nSampleRate;
+	};
+	struct SRhythmVoice {
+		bool bActive;
+		uint32_t nPosX16;
+		uint32_t nStepX16;
+		uint8_t btLevel;
+		uint8_t btPan;
+	};
+	static SRhythmSample m_aRhythmSample[RHYTHM_CHANNEL_COUNT];
+	static SRhythmVoice  m_aRhythmVoice[RHYTHM_CHANNEL_COUNT];
+	static bool m_bRhythmSamplesLoaded;
+	static uint8_t m_btRhythmTotalLevel;
+
+	struct SAdpcmState {
+		std::vector<uint8_t> vMemory;
+		std::vector<uint8_t> vCpuFifo;
+		uint8_t btControl1;
+		uint8_t btControl2;
+		uint8_t btFlagControl;
+		uint8_t btStatus;
+		uint8_t btIrqStatus;
+		uint32_t nStartAddr;
+		uint32_t nStopAddr;
+		uint32_t nLimitAddr;
+		uint32_t nCurrentAddr;
+		uint32_t nStepX16;
+		uint32_t nAccumX16;
+		int nPredictor;
+		int nDelta;
+		int nPreviousSample;
+		int nCurrentSample;
+		int nLastOutputSample;
+		int nFadeSample;
+		int nFadeCounter;
+		int nFadeTotal;
+		uint8_t btDecodeByte;
+		bool bPlaying;
+		bool bExternal;
+		bool bMemoryWrite;
+		bool bMemoryRead;
+		bool bHighNibble;
+		bool bCpuStream;
+		bool bEndAfterByte;
+		bool bTransferEnded;
+		bool bTransferStarted;
+		bool bHaveCurrentSample;
+	};
+		static SAdpcmState m_adpcm;
+		static uint8_t m_abtAdpcmRegisters[0x11];
 
 public:
 	// get base clock
@@ -313,6 +453,9 @@ public:
 	}
 	// set OPNA interrupt requested
 	static void SetOpnaInterruptRequest(bool bOpnaInterruptRequest) {
+		if (!bOpnaInterruptRequest) {
+			m_adpcm.btIrqStatus = 0;
+		}
 		m_bOpnaInterruptRequest = bOpnaInterruptRequest;
 	}
 
@@ -328,6 +471,11 @@ public:
 		SampleOutputCallback pSampleOutputCallback)
 	{
 		m_pSampleOutputCallback = pSampleOutputCallback;
+	}
+	static void SetSystemFileOpenCallback(
+		SystemFileOpenCallback pSystemFileOpenCallback)
+	{
+		m_pSystemFileOpenCallback = pSystemFileOpenCallback;
 	}
 
 	// set output sample rate (Phase C-準備). Must be called before
@@ -349,6 +497,14 @@ public:
 	static void SetSsgMute(bool bMute) { m_bSsgMute = bMute; }
 	static bool GetFmMute()  { return m_bFmMute; }
 	static bool GetSsgMute() { return m_bSsgMute; }
+	static void SetInternalOpnMute(bool bMute) { m_bInternalOpnMute = bMute; }
+	static void SetExpansionOpnaMute(bool bMute) { m_bExpansionOpnaMute = bMute; }
+	static void SetRhythmMute(bool bMute) { m_bRhythmMute = bMute; }
+	static bool GetInternalOpnMute() { return m_bInternalOpnMute; }
+	static bool GetExpansionOpnaMute() { return m_bExpansionOpnaMute; }
+	static bool GetRhythmMute() { return m_bRhythmMute; }
+	static void SetSoundBoardMode(int nMode);
+	static int GetSoundBoardMode() { return m_nSoundBoardMode; }
 	// Per-channel mute (Debug menu). Index 0..2 for FM ch 1..3 / SSG ch A..C.
 	static void SetFmChMute(int nCh, bool bMute) {
 		if ((nCh >= 0) && (nCh < FM_CHANNEL_COUNT)) m_abFmChMute[nCh] = bMute;
@@ -383,6 +539,12 @@ public:
 protected:
 	// update interrupt request
 	static void UpdateInterruptRequest(bool bOpnaInterruptRequest) {
+		if (bOpnaInterruptRequest &&
+			(m_nSoundBoardMode == SOUNDBOARD_OPN_OPNA) &&
+			m_bSoundBoard2InterruptMask)
+		{
+			bOpnaInterruptRequest = false;
+		}
 		if (bOpnaInterruptRequest != m_bOpnaInterruptRequest) {
 			m_bOpnaInterruptRequest = bOpnaInterruptRequest;
 			m_pIntVectChangeCallback();
@@ -392,15 +554,20 @@ protected:
 public:
 	// pass clock
 	static void PassClock(int nClock) {
-		if (m_bTimerAAcvive) {
-			if ((m_nTimerACounter -= nClock) <= 0) {
-				TimerAOverFlow();
-			}
+		if (m_nSoundBoardMode == SOUNDBOARD_OPN ||
+			m_nSoundBoardMode == SOUNDBOARD_OPN_OPNA)
+		{
+				AdvanceTimerState(m_timerInternalOpn, nClock, false);
 		}
-		if (m_bTimerBAcvive) {
-			if ((m_nTimerBCounter -= nClock) <= 0) {
-				TimerBOverFlow();
-			}
+		if (m_nSoundBoardMode == SOUNDBOARD_OPNA ||
+			m_nSoundBoardMode == SOUNDBOARD_OPN_OPNA)
+		{
+				AdvanceTimerState(m_timerExpansionOpna, nClock, true);
+		}
+		if (m_nSoundBoardMode == SOUNDBOARD_OPNA) {
+			LoadTimerState(m_timerExpansionOpna);
+		} else {
+			LoadTimerState(m_timerInternalOpn);
 		}
 		// Phase C-準備: sample-rate conversion accumulator. Each Z80
 		// cycle nudges the fractional sample position; once we have
@@ -443,7 +610,9 @@ protected:
 	static void ResetFmState();
 	// Recompute the FM ticks-per-output-sample ratio whenever base
 	// clock, prescaler_fm, or sample rate changes.
-	static void UpdateFmTickRate();
+		static void UpdateFmTickRate();
+		static void ApplyFmClockToChannels(int nChannelBase, int nChannelCount);
+		static int ComputeFmPhaseScaleX16();
 	// Recompute one operator's nPhaseInc from the channel's F-number,
 	// block, MUL, and DT values. Called whenever any of those change.
 	static void RecomputeFmOperatorPhaseInc(int nChannel, int nOpIndex);
@@ -454,11 +623,15 @@ protected:
 	// $A0–$AE, $B0–$B2). Called from WriteData() after the register
 	// mirror has been updated.
 	static void OnFmRegisterWrite(int nAddress, uint8_t btData);
+	static void OnFmRegisterWriteAt(int nPage, int nChannelBase,
+		int nAddress, uint8_t btData);
 	// Handle a write to register $28 (key on/off mask + channel index).
 	static void OnFmKeyOnOff(uint8_t btData);
+	static void OnFmKeyOnOffAt(int nChannelBase, int nChannelCount,
+		uint8_t btData);
 	// CSM trigger: forced key-on edge on all 4 operators of CH3,
-	// invoked from Timer A overflow when CH3 mode == 2 (CSM).
-	static void OnCsmKeyTrigger();
+	// invoked from Timer A overflow when CH3 mode == 1 (CSM).
+	static void OnCsmKeyTrigger(int nChannelBase);
 	// Map an address in $30–$9E to (channel, op_index_0_based) using
 	// the YM-family 1-3-2-4 slot order. Returns false if the address
 	// targets the unused slot column (channel 3 / op4 of an absent
@@ -469,7 +642,8 @@ protected:
 	// previous operator's linear output, suitably shifted).
 	// Returns a signed linear sample roughly in [-FM_OP_MAX_LINEAR,
 	// +FM_OP_MAX_LINEAR].
-	static int RenderFmOperator(SFmOperator& op, int nModulation);
+	static int RenderFmOperator(SFmOperator& op, int nModulation,
+		int nPmValue, int nAmAtten);
 	// Advance one operator's envelope state machine by one sample.
 	// nKsr is the precomputed key-scaling rate offset (0..3) for this
 	// operator's current channel pitch.
@@ -489,12 +663,54 @@ protected:
 	static int RenderFmChannel(int nChannel);
 	// Render one mono FM sample by mixing all 3 channels.
 	static int RenderFmSample();
+	static void RenderFmStereoSample(int& nLeft, int& nRight);
+	static void UpdateOpnaLfoPhaseInc();
+	static void AdvanceOpnaLfo();
+	static int GetOpnaLfoValue();
+	static int GetOpnaLfoAmDepth();
+	static int ComputeFmLfoPmDelta(const SFmOperator& op, int nPms, int nLfoValue);
+	static int ComputeFmLfoAmAtten(const SFmOperator& op, int nAms, int nAmDepth);
+	static void LoadRhythmSamples();
+	static bool LoadOneRhythmSample(const char* pszName, SRhythmSample& smp);
+	static void OnRhythmRegisterWrite(int nAddress, uint8_t btData);
+	static void RenderRhythmStereoSample(int& nLeft, int& nRight);
+	static void ResetAdpcmState();
+	static uint8_t ReadAdpcmStatus();
+	static uint8_t ReadAdpcmData();
+	static void WriteAdpcmRegister(int nAddress, uint8_t btData);
+	static void RenderAdpcmStereoSample(int& nLeft, int& nRight);
+	static void UpdateAdpcmAddresses();
+	static void UpdateAdpcmStep();
+	static void StartAdpcmPlayback(bool bExternal);
+	static void StopAdpcmPlayback(bool bSetEos);
+	static void ResetAdpcmDecoder();
+	static void AdvanceAdpcmAddress();
+	static bool FetchNextAdpcmByte(uint8_t& btData);
+	static bool DecodeNextAdpcmSample(int& nSample);
+	static bool PrimeAdpcmInterpolator();
+	static void DecodeAdpcmNibble(uint8_t btNibble);
+	static void SetAdpcmStatusFlag(uint8_t btFlag, bool bRaiseIrq = true);
+	static void ClearAdpcmStatusFlag(uint8_t btFlag);
+	static void RefreshInterruptRequest();
+	static void LoadTimerState(const STimerState& state);
+	static void SaveTimerState(STimerState& state);
+	static void ResetTimerState(STimerState& state);
+	static void AdvanceTimerState(STimerState& state, int nClock, bool bExpansion);
+	static void WriteTimerDeviceRegister(bool bExpansion, int nAddress, uint8_t btData);
+	static void LoadSsgState(const SSsgState& state);
+	static void SaveSsgState(SSsgState& state);
+	static void ResetSsgState(SSsgState& state);
+	static int RenderSsgDevice(bool bExpansion);
+	static void WriteSsgDeviceRegister(bool bExpansion, int nAddress, uint8_t btData);
+	static void CopyLowerRegisters(uint8_t* pDst, const uint8_t* pSrc);
+	static void WriteLowerDataForTargets(uint8_t btData,
+		bool bInternalOpn, bool bExpansionOpna);
 
 public:
 	// timer A overflow
-	static void TimerAOverFlow();
+	static void TimerAOverFlow(bool bExpansion);
 	// timer B overflow
-	static void TimerBOverFlow();
+	static void TimerBOverFlow(bool bExpansion);
 	// set timer A counter max value
 	static void SetTimerACounterMax();
 	// set timer B counter max value
@@ -503,7 +719,11 @@ public:
 	static void SetPreScaler(int nPreScalerFM, int nPreScalerPSG);
 	// read status
 	static uint8_t ReadStatus() {
-		return m_btStatus;
+		if (m_nSoundBoardMode == SOUNDBOARD_NONE) return 0xFF;
+		if (m_nSoundBoardMode == SOUNDBOARD_OPNA) {
+			return m_timerExpansionOpna.btStatus;
+		}
+		return m_timerInternalOpn.btStatus;
 	}
 	// read data
 	static uint8_t ReadData();
@@ -511,6 +731,19 @@ public:
 	static void WriteAddress(uint8_t btAddress);
 	// write data
 	static void WriteData(uint8_t btData);
+	static uint8_t ReadStatusUpper();
+	static uint8_t ReadDataUpper();
+	static void WriteAddressUpper(uint8_t btAddress);
+	static void WriteDataUpper(uint8_t btData);
+	static uint8_t ReadStatusSoundBoard2();
+	static uint8_t ReadDataSoundBoard2();
+	static void WriteAddressSoundBoard2(uint8_t btAddress);
+	static void WriteDataSoundBoard2(uint8_t btData);
+	static uint8_t ReadStatusSoundBoard2Upper();
+	static uint8_t ReadDataSoundBoard2Upper();
+	static void WriteAddressSoundBoard2Upper(uint8_t btAddress);
+	static void WriteDataSoundBoard2Upper(uint8_t btData);
+	static void WriteSoundBoard2InterruptMask(uint8_t btData);
 	// Optional diagnostic: write YM2203 register events as CSV when
 	// X88_OPN_LOG=/path/to/file.csv is set. Data writes are logged as
 	// "frame,D,address,data"; prescaler address-only writes ($2D-$2F)

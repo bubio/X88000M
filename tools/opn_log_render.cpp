@@ -1,5 +1,5 @@
 ////////////////////////////////////////////////////////////
-// YM2203 register log renderer
+// OPN/OPNA register log renderer
 //
 // Replays CSV logs produced by X88_OPN_LOG and writes a stereo WAV.
 
@@ -84,7 +84,7 @@ static bool LoadLog(const char* pszPath, std::vector<SEvent>& events) {
 		ev.chEvent = pszEvent[0];
 		ev.nAddress = nAddress;
 		ev.nData = nData;
-		if ((ev.chEvent != 'A') && (ev.chEvent != 'D')) {
+		if ((ev.chEvent != 'A') && (ev.chEvent != 'D') && (ev.chEvent != 'E')) {
 			fprintf(stderr, "bad event type on line %d\n", nLine);
 			fclose(fp);
 			return false;
@@ -207,6 +207,7 @@ int main(int argc, char** argv) {
 	}
 
 	CPC88Opna::Initialize();
+	CPC88Opna::SetSoundBoardMode(CPC88Opna::SOUNDBOARD_OPNA);
 	CPC88Opna::SetBaseClock(nBaseClockMhz);
 	CPC88Opna::SetSampleRate(nSampleRate);
 	CPC88Opna::SetSampleOutputCallback(OnSamples);
@@ -239,6 +240,9 @@ int main(int argc, char** argv) {
 		}
 		if (ev.chEvent == 'A') {
 			CPC88Opna::WriteAddress((uint8_t)ev.nAddress);
+		} else if (ev.chEvent == 'E') {
+			CPC88Opna::WriteAddressUpper((uint8_t)ev.nAddress);
+			CPC88Opna::WriteDataUpper((uint8_t)ev.nData);
 		} else {
 			CPC88Opna::WriteAddress((uint8_t)ev.nAddress);
 			CPC88Opna::WriteData((uint8_t)ev.nData);

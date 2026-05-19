@@ -1,4 +1,6 @@
-# Yamaha YM2203 Technical Reference
+# Sound Hardware Technical Notes
+
+この文書は X88000M のサウンド実装メモです。YM2203 (OPN) から始まった文書ですが、現在は YM2608 (OPNA / Sound Board II)、ADPCM、リズム音源、音質比較用の実験環境変数も含みます。
 
 ## 概要
 
@@ -48,7 +50,7 @@ OPNはCPUからのデータバスを介して2段階アクセス（アドレス�
 | $B0 – $B2 | FMアルゴリズムおよびフィードバック設定（モジュレーション接続・自己帰還量）[^3] |
 | $28       | キーON/OFF制御（FMチャンネル別・オペレータ別ゲート）— 詳細は下記「FMレジスタのビット詳細」節 |
 
-> **注意 (本リポジトリで修正)**: 過去のリビジョンには `$B4–$B6 = キーON/OFF制御` という行がありましたが、これは **誤り** です。YM2203 における Key On/Off は単一レジスタ **`$28`** に集約されています。`$B4–$B6` は **YM2608(OPNA)** で導入された L/R/AMS/PMS 用のアドレスで、**YM2203 では未定義** です。本エミュレータは OPNA 非対応方針のため、`$B4–$B6` への書き込みは無視します。
+> **注意 (本リポジトリで修正)**: 過去のリビジョンには `$B4–$B6 = キーON/OFF制御` という行がありましたが、これは **誤り** です。YM2203 における Key On/Off は単一レジスタ **`$28`** に集約されています。`$B4–$B6` は **YM2608(OPNA)** で導入された L/R/AMS/PMS 用のアドレスで、**YM2203 では未定義** です。現行実装では OPNA モード時のみ L/R pan と AMS/PMS を反映し、`$22` の内蔵 sine LFO と `$60-$6E` の AMON を音響へ反映します。
 
 ### タイマとモードレジスタ
 
@@ -122,8 +124,8 @@ FM部分では各オペレータごとに以下のパラメータを設定する
 |---|---|
 | `$A0`–`$A2` | F-Number 下位 8bit (CH1, CH2, CH3) |
 | `$A4`–`$A6` | bit5–3 = BLOCK (3bit), bit2–0 = F-Number 上位 3bit (合計 11bit F-Number) |
-| `$A8`–`$AA` | CH3 特殊モード時、Op1/Op2/Op3 用の F-Number 下位 (※ Op4 は通常の `$A2`) |
-| `$AC`–`$AE` | CH3 特殊モード時、Op1/Op2/Op3 用の BLOCK + F-Number 上位 (※ Op4 は通常の `$A6`) |
+| `$A8`–`$AA` | CH3 特殊モード時、OP3/OP1/OP2 用の F-Number 下位 (※ OP4 は通常の `$A2`) |
+| `$AC`–`$AE` | CH3 特殊モード時、OP3/OP1/OP2 用の BLOCK + F-Number 上位 (※ OP4 は通常の `$A6`) |
 | `$B0`–`$B2` | bit5–3 = FEEDBACK (3bit), bit2–0 = ALGORITHM (3bit) |
 
 ### グローバル
@@ -476,12 +478,17 @@ YM2149 データシートには `f_envelope = fc / (256 × EP)` という式が�
 
 `$27` のビット 6/7 で CH3 を「特殊モード」にすると、CH3 の 4 オペレータそれぞれに**異なる F-Number / BLOCK** を与えられるようになります。これにより不協和な倍音や非整数比の音色を作ることができます。
 
+- `$27` D7,D6 = `00`: 通常モード
+- `$27` D7,D6 = `01`: CSM。Timer A overflow ごとに CH3 を自動 key-on する
+- `$27` D7,D6 = `10` / `11`: effect sound mode。オペレータ別 F-Number は使うが、CSM の Timer A 自動 key-on は行わない
 - 通常モード: CH3 の全 4 オペレータは `$A2` (低位) / `$A6` (高位) で同じ F-Number を共有
 - 特殊モード:
   - OP4 → `$A2` / `$A6` (通常の場所)
-  - OP1 → `$A8` / `$AC`
-  - OP2 → `$A9` / `$AD`
-  - OP3 → `$AA` / `$AE`
+  - OP1 → `$A9` / `$AD`
+  - OP2 → `$AA` / `$AE`
+  - OP3 → `$A8` / `$AC`
+
+YM2608(OPNA) の上位ポート側 CH6 も同じ対応で、`$A8`/`$AC` は OP3、`$A9`/`$AD` は OP1、`$AA`/`$AE` は OP2 に割り当てます。
 
 ## PC-8801 における YM2203
 
@@ -572,13 +579,72 @@ Yamaha が公開した YM2203 / YM2608 アプリケーションマニュアル�
 
 ここまでの実装で踏んだ罠と修正:
 
+## 実験用環境変数と補助実行ファイル
+
+ここにある環境変数と補助実行ファイルは、通常利用向けの設定ではなく、YM2203/YM2608 実装の比較・切り分け・A/B 調整用です。音の再現性は現状値を標準とし、下記は問題調査時だけ使います。
+
+### ログ取得系
+
+- `X88_OPN_LOG=/path/to/opn.csv`: `PC88Opna` へのレジスタ書き込みを sample frame 単位でCSVへ出力する。`opn_log_render` でWAVに再レンダリングするための入力。
+- `X88_SOUND_IO_LOG=/path/to/soundio.csv`: Z80の音源I/OポートアクセスをCSVへ出力する。OPNA/Sound Board II 検出、ADPCM STATUS1、割り込みタイミングなど、CPUから見える挙動の調査用。
+- `X88_FM_DEBUG=1`: FMチャンネルの内部状態をstderrへ出す詳細診断。出力量が多いため、短時間の切り分け専用。
+
+### ADPCM / OPNA IRQ
+
+- `X88_ADPCM_IRQ`: ADPCM由来のCPU音源割り込み配送を切り替える。
+  - 未指定 / `1` / `eos`: 既定値。再生完了由来のEOSのみを配送する。
+  - `0`: ADPCM IRQをCPU音源割り込みへ配送しない。
+  - `full`: EOSに加えてBRDY/ZEROも配送する。検証用扱いで、通常タイトルでは割り込み過多になる可能性がある。
+
+OPNA Timer A/B が演奏クロックとして動いている間は、ADPCMフラグはSTATUS1で読めますが、追加のCPU音源割り込みとしては配送しません。
+
+### ミックス / 音質調整
+
+- `X88_FM_MIX_SCALE`: FMセクションの最終ミックス倍率。既定値は 1.6
+- `X88_SSG_MIX_SCALE`: SSGセクションの最終ミックス倍率。既定値は 1.0
+- `X88_ADPCM_MIX_SCALE`: ADPCMセクションの最終ミックス倍率。既定値は 1.4
+- `X88_RHYTHM_MIX_SCALE`: リズム音源セクションの最終ミックス倍率。既定値は 1.4
+- `X88_MASTER_VOLUME_MAX_GAIN`: SDL3 frontend の master volume 100 に対応する最終出力gain。既定値は 2.0
+- `X88_ADPCM_DECLICK_SAMPLES`: ADPCM停止時の簡易de-clickサンプル数。既定値は 32
+
+### FM実験ノブ
+
+FM音色追い込み用の環境変数です。現状値を標準として扱い、通常は変更しません。
+
+- `X88_FM_ENV_RATE_SCALE`
+- `X88_FM_ENV_RATE_BANDS`
+- `X88_FM_DECAY_RATE_SCALE`
+- `X88_FM_SUSTAIN_RATE_SCALE`
+- `X88_FM_RELEASE_RATE_SCALE`
+- `X88_FM_PERC_DECAY_RATE_SCALE`
+- `X88_FM_MOD_SCALE`
+- `X88_FM_MOD_SCALE_ALGO0`〜`X88_FM_MOD_SCALE_ALGO7`
+- `X88_FM_FB_SCALE`
+- `X88_FM_PHASE_RESET_ON_KEY`
+- `X88_FM_RETRIGGER_ON_KEY_WRITE`
+- `X88_FM_DT_SCALE`
+- `X88_FM_DT_APPLY_MUL`
+- `X88_FM_DT_MUL_WEIGHT`
+- `X88_FM_LFO_PM_SCALE`
+
+### 補助実行ファイル
+
+`opn_log_render` は `X88_OPN_LOG` のCSVを `PC88Opna` 単体へ流し込み、stereo 16-bit PCM WAVを生成する比較用ツールです。
+
+```sh
+cmake --build build --target opn_log_render
+./build/opn_log_render /tmp/opn.csv /tmp/opn.wav --fm-only --fm-ch 1 --tail-sec 3
+```
+
+主な用途は、X88000M実行時に採取したレジスタログを同じ音源実装で再生し直し、他エミュ録音や実機録音と比較することです。現状の `opn_log_render` は OPN / native OPNA の lower/upper port ログ再生用で、Sound Board II の A8h/A9h/ACh/ADh 固有ログの完全再生は対象外です。
+
 ## 比較用レジスタログと WAV 再レンダリング
 
-他エミュや実機録音に近づけるためのブラックボックス比較用に、YM2203 のレジスタ書き込みを sample frame 単位で CSV 化し、`PC88Opna` 単体で同じログを WAV に再レンダリングできるようにしている。
+他エミュや実機録音に近づけるためのブラックボックス比較用に、OPN/OPNA のレジスタ書き込みを sample frame 単位で CSV 化し、`PC88Opna` 単体で同じログを WAV に再レンダリングできるようにしている。
 
 ### ログ取得
 
-`X88_OPN_LOG` に出力先 CSV を指定して X88000M を起動すると、YM2203 への書き込みが次の形式で記録される:
+`X88_OPN_LOG` に出力先 CSV を指定して X88000M を起動すると、音源レジスタへの書き込みが次の形式で記録される:
 
 ```sh
 X88_OPN_LOG=/tmp/opn.csv ./build/X88000M.app/Contents/MacOS/X88000M
@@ -595,6 +661,7 @@ frame,event,address,data
 
 - `frame`: その書き込みが発生した時点の出力 sample frame
 - `event=D`: 通常の data write。再生時は `WriteAddress(address)` → `WriteData(data)` として扱う
+- `event=E`: OPNA upper port の data write。再生時は `WriteAddressUpper(address)` → `WriteDataUpper(data)` として扱う
 - `event=A`: address write だけで副作用を持つ `$2D-$2F` prescaler 書き込み。再生時は `WriteAddress(address)` のみ
 
 ### WAV 再レンダリング
@@ -659,10 +726,13 @@ X88_FM_MOD_SCALE_ALGO2=1.0
 X88_FM_FB_SCALE=1.25
 X88_FM_PHASE_RESET_ON_KEY=0
 X88_FM_DT_SCALE=1.50
-X88_FM_DT_APPLY_MUL=0
-X88_FM_DT_MUL_WEIGHT=0.0
+X88_FM_DT_APPLY_MUL=true
+X88_FM_DT_MUL_WEIGHT=1.0
+X88_FM_RELEASE_RATE_SCALE=1.0
 X88_SSG_MIX_SCALE=0.5
 X88_FM_MIX_SCALE=1.0
+X88_ADPCM_MIX_SCALE=1.4
+X88_RHYTHM_MIX_SCALE=1.4
 X88_MASTER_VOLUME_MAX_GAIN=1.0
 ```
 
@@ -670,16 +740,20 @@ X88_MASTER_VOLUME_MAX_GAIN=1.0
 - `X88_FM_ENV_RATE_BANDS`: `first-last:scale` のカンマ区切り。指定 rate 帯だけ倍率を上書き
 - `X88_FM_DECAY_RATE_SCALE`: DECAY state だけの追加倍率。既定値は 1.0
 - `X88_FM_SUSTAIN_RATE_SCALE`: SUSTAIN state だけの追加倍率。既定値は 1.0
+- `X88_FM_RELEASE_RATE_SCALE`: RELEASE state だけの追加倍率。既定値は 1.0
 - `X88_FM_PERC_DECAY_RATE_SCALE`: `ALGO=4 / FB=7` の打楽器的パッチだけに掛ける DECAY 追加倍率。YS2 Opening CH3 のドラムで尾が残りすぎるため既定値は 1.5。1.0 で無効相当
 - `X88_FM_MOD_SCALE`: operator 間 feed-forward modulation の倍率。厚み・倍音量の A/B 用
 - `X88_FM_MOD_SCALE_ALGO0`〜`X88_FM_MOD_SCALE_ALGO7`: algorithm 別の modulation 追加倍率。YS Opening CH1 後半の ALGO2 音色に合わせ、ALGO2 の既定値は 0.95
 - `X88_FM_FB_SCALE`: OP1 self-feedback の倍率
 - `X88_FM_PHASE_RESET_ON_KEY`: 1 で key-on edge ごとに operator phase を 0 に戻す。StarTrader Opening の FM 3ch ドラムで低域の押し出しが改善したため既定値は 1。0 で旧 free-running phase 挙動
+- `X88_FM_RETRIGGER_ON_KEY_WRITE`: 1 で既に key-on 中の `$28` 再書き込みでも ATTACK を再トリガする。通常のドライバは F-Number 更新中にも同じ key-on mask を再書き込みするため、既定値は 0
 - `X88_FM_DT_SCALE`: detune offset の倍率。うねり・chorus 感の A/B 用
 - `X88_FM_DT_APPLY_MUL`: 1 で DT offset を operator MUL に追従させるための重み処理を有効にする。既定値は 1
 - `X88_FM_DT_MUL_WEIGHT`: DT が operator MUL に追従する量。既定値は 1.0。Scheme DeathWorld CH2 で full MUL-follow が必要なため、こちらを標準にする。0.0 で旧 fixed-offset 相当
 - `X88_SSG_MIX_SCALE`: SSG セクションの最終ミックス倍率。2026-05 の FM 改善後は既定値 1.0。0.5 で旧「SSG 半分」挙動
 - `X88_FM_MIX_SCALE`: FM セクションの最終ミックス倍率。FM/SSG バランス調整後の既定値は 1.6。1.0 で旧 FM レベル
+- `X88_ADPCM_MIX_SCALE`: ADPCM セクションの最終ミックス倍率。既定値は 1.4
+- `X88_RHYTHM_MIX_SCALE`: rhythm セクションの最終ミックス倍率。既定値は 1.4
 - `X88_MASTER_VOLUME_MAX_GAIN`: SDL3 frontend の master volume 100 に対応する最終出力 gain。既定値は 2.0。1.0 で旧「100 = unity」挙動
 
 旧 v1.0.2 近似 (`shift=13` のみ) と比較したい場合は次のように起動する:
@@ -764,7 +838,8 @@ v1.0.2 で Operator output 14-bit 化・modulation `>> 1`・feedback `>> (10-FB)
 
 - **Attack curve**: `(env >> 4) + 1` は近似。実機 curve table と微妙に違うが、聴感上の差は小さい
 - **Envelope rate の段差**: 現状は `(add * 65536) >> shift` の平均化 + 一律 4x 低速化。実機は段付き (rate ごとに tick イベントが離散的に発火) で、ピアノの初期減衰などで微妙な質感差が残る可能性あり
-- **LFO 系 ($22, $B4–$B6 の AMS/PMS)**: YM2203 では未定義のため対象外 (OPNA only)
+- **LFO 系 ($22, $B4–$B6 の AMS/PMS)**: YM2203 では未定義。OPNA モードでは YM2608 application manual の周波数表・PMS/AMS深度・AMONに基づく初期実装を行っているが、実機完全一致の内部LFO波形/位相タイミングまでは未検証。PMS は聴感比較用に `X88_FM_LFO_PM_SCALE` (既定値 0.7) を掛けており、`1.0` で manual 表の cent 値をそのまま片振幅として扱う。
+- **ADPCM IRQ**: 既定では `X88_ADPCM_IRQ=1` 相当として、再生完了由来の EOS のみをCPU音源割り込みへ反映する。`X88_ADPCM_IRQ=0` で無効化、`X88_ADPCM_IRQ=full` は BRDY/ZERO も含めて反映する。ステータス上のEOSは仕様通り外部メモリread/write完了でも立つが、既定/eos モードではRAM転送完了EOSをCPU IRQへ流さない。OPNA Timer A/B が音源割り込み源として動作している間は、ADPCMフラグはSTATUS1に保持しつつ追加のCPU音源割り込みとしては配送しない。
 
 さらに詰めるなら YM2608 application manual の attack curve table・envelope rate の shift/add 分解表を一次資料として深掘りし、個別 rate の経験的 fit (fmgen 録音との FFT 差分解析) で詰めるのが次のステップ。ただし本リポジトリのライセンス方針上 decap 由来コード参照は不可。
 

@@ -53,6 +53,34 @@ CPC88Pcg* CPC88Z80Main::m_pPcg;
 
 CParallelDevice* CPC88Z80Main::m_pParallelDevice;
 
+static void LogSoundIO(char chAccess, int nAddress, int nData) {
+	static bool s_bChecked = false;
+	static FILE* s_fp = NULL;
+	static unsigned long long s_nSeq = 0;
+	if (!s_bChecked) {
+		s_bChecked = true;
+		const char* pszPath = getenv("X88_SOUND_IO_LOG");
+		if ((pszPath != NULL) && (*pszPath != '\0')) {
+			s_fp = fopen(pszPath, "wb");
+			if (s_fp != NULL) {
+				fprintf(s_fp,
+					"# X88000M sound I/O log\n"
+					"# columns: seq,access,port,data,soundboard\n");
+			}
+		}
+	}
+	if (s_fp == NULL) {
+		return;
+	}
+	fprintf(s_fp, "%llu,%c,%02X,%02X,%d\n",
+		s_nSeq++,
+		chAccess,
+		nAddress & 0xFF,
+		nData & 0xFF,
+		CPC88Opna::GetSoundBoardMode());
+	fflush(s_fp);
+}
+
 // memory
 
 // N88-BASIC ROM
@@ -991,6 +1019,20 @@ void CPC88Z80Main::Reset() {
 	SetWriteIOProc(0x44, WriteIO_44);
 	SetReadIOProc(0x45, ReadIO_45);
 	SetWriteIOProc(0x45, WriteIO_45);
+	SetReadIOProc(0x46, ReadIO_46);
+	SetWriteIOProc(0x46, WriteIO_46);
+	SetReadIOProc(0x47, ReadIO_47);
+	SetWriteIOProc(0x47, WriteIO_47);
+	SetReadIOProc(0xA8, ReadIO_A8);
+	SetWriteIOProc(0xA8, WriteIO_A8);
+	SetReadIOProc(0xA9, ReadIO_A9);
+	SetWriteIOProc(0xA9, WriteIO_A9);
+	SetReadIOProc(0xAA, ReadIO_AA);
+	SetWriteIOProc(0xAA, WriteIO_AA);
+	SetReadIOProc(0xAC, ReadIO_AC);
+	SetWriteIOProc(0xAC, WriteIO_AC);
+	SetReadIOProc(0xAD, ReadIO_AD);
+	SetWriteIOProc(0xAD, WriteIO_AD);
 	SetReadIOProc(0x50, ReadIO_50);
 	SetWriteIOProc(0x50, WriteIO_50);
 	SetReadIOProc(0x51, ReadIO_51);
@@ -1136,6 +1178,20 @@ void CPC88Z80Main::Reset() {
 			SetWriteIOProc(0x44, WriteNONE);
 			SetReadIOProc(0x45, ReadNONE);
 			SetWriteIOProc(0x45, WriteNONE);
+			SetReadIOProc(0x46, ReadNONE);
+			SetWriteIOProc(0x46, WriteNONE);
+			SetReadIOProc(0x47, ReadNONE);
+			SetWriteIOProc(0x47, WriteNONE);
+			SetReadIOProc(0xA8, ReadNONE);
+			SetWriteIOProc(0xA8, WriteNONE);
+			SetReadIOProc(0xA9, ReadNONE);
+			SetWriteIOProc(0xA9, WriteNONE);
+			SetReadIOProc(0xAA, ReadNONE);
+			SetWriteIOProc(0xAA, WriteNONE);
+			SetReadIOProc(0xAC, ReadNONE);
+			SetWriteIOProc(0xAC, WriteNONE);
+			SetReadIOProc(0xAD, ReadNONE);
+			SetWriteIOProc(0xAD, WriteNONE);
 			break;
 		case BASICMODE_N80V1:
 			SetWriteIOProc(0x33, WriteNONE);
@@ -1145,6 +1201,20 @@ void CPC88Z80Main::Reset() {
 			SetWriteIOProc(0x44, WriteNONE);
 			SetReadIOProc(0x45, ReadNONE);
 			SetWriteIOProc(0x45, WriteNONE);
+			SetReadIOProc(0x46, ReadNONE);
+			SetWriteIOProc(0x46, WriteNONE);
+			SetReadIOProc(0x47, ReadNONE);
+			SetWriteIOProc(0x47, WriteNONE);
+			SetReadIOProc(0xA8, ReadNONE);
+			SetWriteIOProc(0xA8, WriteNONE);
+			SetReadIOProc(0xA9, ReadNONE);
+			SetWriteIOProc(0xA9, WriteNONE);
+			SetReadIOProc(0xAA, ReadNONE);
+			SetWriteIOProc(0xAA, WriteNONE);
+			SetReadIOProc(0xAC, ReadNONE);
+			SetWriteIOProc(0xAC, WriteNONE);
+			SetReadIOProc(0xAD, ReadNONE);
+			SetWriteIOProc(0xAD, WriteNONE);
 			SetWriteIOProc(0x52, WriteNONE);
 			SetWriteIOProc(0x53, WriteNONE);
 			for (nBlock = 0x54; nBlock <= 0x5B; nBlock++) {
@@ -1162,6 +1232,20 @@ void CPC88Z80Main::Reset() {
 			SetWriteIOProc(0x44, WriteNONE);
 			SetReadIOProc(0x45, ReadNONE);
 			SetWriteIOProc(0x45, WriteNONE);
+			SetReadIOProc(0x46, ReadNONE);
+			SetWriteIOProc(0x46, WriteNONE);
+			SetReadIOProc(0x47, ReadNONE);
+			SetWriteIOProc(0x47, WriteNONE);
+			SetReadIOProc(0xA8, ReadNONE);
+			SetWriteIOProc(0xA8, WriteNONE);
+			SetReadIOProc(0xA9, ReadNONE);
+			SetWriteIOProc(0xA9, WriteNONE);
+			SetReadIOProc(0xAA, ReadNONE);
+			SetWriteIOProc(0xAA, WriteNONE);
+			SetReadIOProc(0xAC, ReadNONE);
+			SetWriteIOProc(0xAC, WriteNONE);
+			SetReadIOProc(0xAD, ReadNONE);
+			SetWriteIOProc(0xAD, WriteNONE);
 			SetWriteIOProc(0x52, WriteNONE);
 			SetWriteIOProc(0x53, WriteNONE);
 			for (nBlock = 0x54; nBlock <= 0x5B; nBlock++) {
@@ -2617,25 +2701,136 @@ void CPC88Z80Main::WriteIO_40(int /*nAddress*/, uint8_t btData) {
 // I/O port 44 read
 
 uint8_t CPC88Z80Main::ReadIO_44(int /*nAddress*/) {
-	return Opna().ReadStatus();
+	uint8_t btData = Opna().ReadStatus();
+	LogSoundIO('R', 0x44, btData);
+	return btData;
 }
 
 // I/O port 44 write
 
 void CPC88Z80Main::WriteIO_44(int /*nAddress*/, uint8_t btData) {
+	LogSoundIO('W', 0x44, btData);
 	Opna().WriteAddress(btData);
 }
 
 // I/O port 45 read
 
 uint8_t CPC88Z80Main::ReadIO_45(int /*nAddress*/) {
-	return Opna().ReadData();
+	uint8_t btData = Opna().ReadData();
+	LogSoundIO('R', 0x45, btData);
+	return btData;
 }
 
 // I/O port 45 write
 
 void CPC88Z80Main::WriteIO_45(int /*nAddress*/, uint8_t btData) {
+	LogSoundIO('W', 0x45, btData);
 	Opna().WriteData(btData);
+}
+
+// I/O port 46 read
+
+uint8_t CPC88Z80Main::ReadIO_46(int /*nAddress*/) {
+	uint8_t btData = Opna().ReadStatusUpper();
+	LogSoundIO('R', 0x46, btData);
+	return btData;
+}
+
+// I/O port 46 write
+
+void CPC88Z80Main::WriteIO_46(int /*nAddress*/, uint8_t btData) {
+	LogSoundIO('W', 0x46, btData);
+	Opna().WriteAddressUpper(btData);
+}
+
+// I/O port 47 read
+
+uint8_t CPC88Z80Main::ReadIO_47(int /*nAddress*/) {
+	uint8_t btData = Opna().ReadDataUpper();
+	LogSoundIO('R', 0x47, btData);
+	return btData;
+}
+
+// I/O port 47 write
+
+void CPC88Z80Main::WriteIO_47(int /*nAddress*/, uint8_t btData) {
+	LogSoundIO('W', 0x47, btData);
+	Opna().WriteDataUpper(btData);
+}
+
+// I/O port A8 read
+
+uint8_t CPC88Z80Main::ReadIO_A8(int /*nAddress*/) {
+	uint8_t btData = Opna().ReadStatusSoundBoard2();
+	LogSoundIO('R', 0xA8, btData);
+	return btData;
+}
+
+// I/O port A8 write
+
+void CPC88Z80Main::WriteIO_A8(int /*nAddress*/, uint8_t btData) {
+	LogSoundIO('W', 0xA8, btData);
+	Opna().WriteAddressSoundBoard2(btData);
+}
+
+// I/O port A9 read
+
+uint8_t CPC88Z80Main::ReadIO_A9(int /*nAddress*/) {
+	uint8_t btData = Opna().ReadDataSoundBoard2();
+	LogSoundIO('R', 0xA9, btData);
+	return btData;
+}
+
+// I/O port A9 write
+
+void CPC88Z80Main::WriteIO_A9(int /*nAddress*/, uint8_t btData) {
+	LogSoundIO('W', 0xA9, btData);
+	Opna().WriteDataSoundBoard2(btData);
+}
+
+// I/O port AA read
+
+uint8_t CPC88Z80Main::ReadIO_AA(int /*nAddress*/) {
+	uint8_t btData = 0xFF;
+	LogSoundIO('R', 0xAA, btData);
+	return btData;
+}
+
+// I/O port AA write
+
+void CPC88Z80Main::WriteIO_AA(int /*nAddress*/, uint8_t btData) {
+	LogSoundIO('W', 0xAA, btData);
+	Opna().WriteSoundBoard2InterruptMask(btData);
+}
+
+// I/O port AC read
+
+uint8_t CPC88Z80Main::ReadIO_AC(int /*nAddress*/) {
+	uint8_t btData = Opna().ReadStatusSoundBoard2Upper();
+	LogSoundIO('R', 0xAC, btData);
+	return btData;
+}
+
+// I/O port AC write
+
+void CPC88Z80Main::WriteIO_AC(int /*nAddress*/, uint8_t btData) {
+	LogSoundIO('W', 0xAC, btData);
+	Opna().WriteAddressSoundBoard2Upper(btData);
+}
+
+// I/O port AD read
+
+uint8_t CPC88Z80Main::ReadIO_AD(int /*nAddress*/) {
+	uint8_t btData = Opna().ReadDataSoundBoard2Upper();
+	LogSoundIO('R', 0xAD, btData);
+	return btData;
+}
+
+// I/O port AD write
+
+void CPC88Z80Main::WriteIO_AD(int /*nAddress*/, uint8_t btData) {
+	LogSoundIO('W', 0xAD, btData);
+	Opna().WriteDataSoundBoard2Upper(btData);
 }
 
 // I/O port 50 read

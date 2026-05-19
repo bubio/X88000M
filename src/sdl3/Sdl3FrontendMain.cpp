@@ -178,6 +178,36 @@ const char* BasicChoiceToLabel(int nChoice)
 	return "N88-V2";
 }
 
+const char* SoundBoardToString(int nMode)
+{
+	switch (nMode) {
+	case CPC88Opna::SOUNDBOARD_NONE:     return "none";
+	case CPC88Opna::SOUNDBOARD_OPNA:     return "opna";
+	case CPC88Opna::SOUNDBOARD_OPN_OPNA: return "opn_opna";
+	case CPC88Opna::SOUNDBOARD_OPN:
+	default:                             return "opn";
+	}
+}
+
+const char* SoundBoardToLabel(int nMode)
+{
+	switch (nMode) {
+	case CPC88Opna::SOUNDBOARD_NONE:     return "None";
+	case CPC88Opna::SOUNDBOARD_OPNA:     return "YM2608 / OPNA native";
+	case CPC88Opna::SOUNDBOARD_OPN_OPNA: return "YM2203 + Sound Board II";
+	case CPC88Opna::SOUNDBOARD_OPN:
+	default:                             return "YM2203 / OPN";
+	}
+}
+
+int SoundBoardFromString(const std::string& strValue)
+{
+	if (strValue == "none")     return CPC88Opna::SOUNDBOARD_NONE;
+	if (strValue == "opna")     return CPC88Opna::SOUNDBOARD_OPNA;
+	if (strValue == "opn_opna") return CPC88Opna::SOUNDBOARD_OPN_OPNA;
+	return CPC88Opna::SOUNDBOARD_OPN;
+}
+
 int BasicChoiceFromString(const std::string& strValue, int nDefault)
 {
 	if (strValue == "n")     return BASIC_CHOICE_N;
@@ -257,6 +287,8 @@ void ApplyEnvSettingsFromIni(CSdl3Settings& settings)
 			CPC88::SetBaseClock(4);
 		}
 	}
+	CPC88::Opna().SetSoundBoardMode(SoundBoardFromString(
+		settings.GetSectionString(SECTION_OPTION, "soundboard", "opn")));
 	// Drive count
 	std::string strDrives = settings.GetSectionString(SECTION_OPTION, "drives", "");
 	if (!strDrives.empty()) {
@@ -322,6 +354,7 @@ struct SEnvSettingsView {
 	bool bBeepMute;
 	int  nPcgVolume;
 	bool bPcgMute;
+	int  nSoundBoard;
 	bool bInterlace;
 	int  nFrameRate;
 	bool bHiResolution;
@@ -341,6 +374,7 @@ struct SEnvSettingsView {
 		bBeepMute(false),
 		nPcgVolume(50),
 		bPcgMute(false),
+		nSoundBoard(CPC88Opna::SOUNDBOARD_OPN),
 		bInterlace(false),
 		nFrameRate(20),
 		bHiResolution(false),
@@ -368,6 +402,7 @@ void LoadEnvSettingsView(SEnvSettingsView& view, CSdl3Settings& settings)
 	view.bBeepMute   = ParseBoolEntry(settings.GetSectionString(SECTION_OPTION, "beepmute", "off"), false);
 	view.nPcgVolume  = atoi(settings.GetSectionString(SECTION_OPTION, "pcgvolume", "50").c_str());
 	view.bPcgMute    = ParseBoolEntry(settings.GetSectionString(SECTION_OPTION, "pcgmute", "off"), false);
+	view.nSoundBoard = CPC88::Opna().GetSoundBoardMode();
 	view.bInterlace  = ParseBoolEntry(settings.GetSectionString(SECTION_OPTION, "interlace", "off"), false);
 	view.nFrameRate  = atoi(settings.GetSectionString(SECTION_OPTION, "framerate", "20").c_str());
 	view.bHiResolution = CPC88::IsHiresolution();
@@ -531,6 +566,32 @@ bool DrawEnvSettingsWindow(bool& bShow, SEnvSettingsView& view, CSdl3Settings& s
 		}
 
 		if (ImGui::CollapsingHeader("Sound", ImGuiTreeNodeFlags_DefaultOpen)) {
+			const char* aszSoundBoardLabels[] = {
+				"None",
+				"YM2203 / OPN",
+				"YM2608 / OPNA native",
+				"YM2203 + Sound Board II"
+			};
+			int anSoundBoardValues[] = {
+				CPC88Opna::SOUNDBOARD_NONE,
+				CPC88Opna::SOUNDBOARD_OPN,
+				CPC88Opna::SOUNDBOARD_OPNA,
+				CPC88Opna::SOUNDBOARD_OPN_OPNA
+			};
+			int nSoundBoardIdx = 1;
+			for (int i = 0; i < 4; i++) {
+				if (anSoundBoardValues[i] == view.nSoundBoard) {
+					nSoundBoardIdx = i;
+					break;
+				}
+			}
+			if (ImGui::Combo("Sound board", &nSoundBoardIdx, aszSoundBoardLabels, 4)) {
+				view.nSoundBoard = anSoundBoardValues[nSoundBoardIdx];
+				CPC88::Opna().SetSoundBoardMode(view.nSoundBoard);
+				settings.SetSectionString(SECTION_OPTION, "soundboard",
+					SoundBoardToString(view.nSoundBoard));
+				bRequestReset = true;
+			}
 			if (ImGui::SliderInt("Beep volume", &view.nBeepVolume, 0, 100)) {
 				char szBuf[16];
 				snprintf(szBuf, sizeof(szBuf), "%d", view.nBeepVolume);
@@ -4099,16 +4160,33 @@ int main(int argc, char** argv) {
 					// Audio mute controls
 					bool bFmMute  = CPC88::Opna().GetFmMute();
 					bool bSsgMute = CPC88::Opna().GetSsgMute();
+					bool bInternalOpnMute = CPC88::Opna().GetInternalOpnMute();
+					bool bExpansionOpnaMute = CPC88::Opna().GetExpansionOpnaMute();
+					bool bRhythmMute = CPC88::Opna().GetRhythmMute();
 					if (ImGui::MenuItem("Mute FM (all)", NULL, bFmMute)) {
 						CPC88::Opna().SetFmMute(!bFmMute);
 					}
 					if (ImGui::MenuItem("Mute SSG (all)", NULL, bSsgMute)) {
 						CPC88::Opna().SetSsgMute(!bSsgMute);
 					}
+					if (ImGui::MenuItem("Mute Internal OPN", NULL, bInternalOpnMute)) {
+						CPC88::Opna().SetInternalOpnMute(!bInternalOpnMute);
+					}
+					if (ImGui::MenuItem("Mute Expansion OPNA", NULL, bExpansionOpnaMute)) {
+						CPC88::Opna().SetExpansionOpnaMute(!bExpansionOpnaMute);
+					}
+					if (ImGui::MenuItem("Mute OPNA rhythm", NULL, bRhythmMute)) {
+						CPC88::Opna().SetRhythmMute(!bRhythmMute);
+					}
 					ImGui::Separator();
-					for (int nCh = 0; nCh < 3; nCh++) {
+					for (int nCh = 0; nCh < CPC88Opna::FM_CHANNEL_COUNT; nCh++) {
 						char szLabel[32];
-						snprintf(szLabel, sizeof(szLabel), "Mute FM ch%d", nCh + 1);
+						if (nCh < CPC88Opna::EXPANSION_FM_CHANNEL_BASE) {
+							snprintf(szLabel, sizeof(szLabel), "Mute OPN FM ch%d", nCh + 1);
+						} else {
+							snprintf(szLabel, sizeof(szLabel), "Mute OPNA FM ch%d",
+								nCh - CPC88Opna::EXPANSION_FM_CHANNEL_BASE + 1);
+						}
 						bool bChMute = CPC88::Opna().GetFmChMute(nCh);
 						if (ImGui::MenuItem(szLabel, NULL, bChMute)) {
 							CPC88::Opna().SetFmChMute(nCh, !bChMute);

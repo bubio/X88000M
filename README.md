@@ -34,8 +34,10 @@ X88000のLinux版からGTK 2.0依存を排除し、SDL3 + Dear ImGuiで構築し
   `Disk Manager` で D88 内のイメージを一覧し、Drive 1〜4 に割り当てできます。
 - **普段使いに必要な機能を搭載**
   BASIC モード切り替え、4/8 MHz 切り替え、環境設定、スクリーンショット保存、画面テキストのコピー、テキスト貼り付け、プリンタプレビュー、フルスクリーンに対応しています。
-- **YM2203に対応**
-  オリジナルのX88000は音源部分を搭載していない、YM2203のエミュレーション機能を搭載しています。
+- **YM2203 / YM2608に対応**
+  YM2203 (OPN) に加え、YM2608 (OPNA / Sound Board II) の FM 6ch、リズム音源、ADPCM の初期実装に対応しています。
+  Environment Settings の Sound board で `YM2203 / OPN`、`YM2608 / OPNA native`、`YM2203 + Sound Board II` を切り替えられます。
+  FH/MH 以降の内蔵 OPNA 構成は `YM2608 / OPNA native`、SR/FR/MR などの YM2203 搭載機に Sound Board II を追加した構成は `YM2203 + Sound Board II` を選んでください。
 - **デバッグ用途にも強い**
   別ウィンドウのデバッガ、逆アセンブル、メモリダンプ、ブレークポイント、RAM エクスポート、実行ログ記録を利用できます。
 
@@ -209,8 +211,13 @@ cmake --build build --target X88000M --parallel
 ## 現在の注意点
 
 - ROM イメージは同梱していません。
-- YM2608 (OPNA)には対応していません。
-- YM2203 (OPN)の実装はPDSライセンスを維持するためデータシートなど公式に得られる情報で作成しています。このための音の再現性は低いです。
+- YM2608 (OPNA) の ADPCM は初期実装です。LFO は `$22` の内蔵 sine LFO、`$B4-$B6` の AMS/PMS、`$60-$6E` の AMON を音響へ反映しますが、実機完全一致ではありません。
+- YM2608 の ADPCM IRQ は既定で `X88_ADPCM_IRQ=1` 相当、つまり再生完了由来の EOS のみを音源割り込みへ反映します。`X88_ADPCM_IRQ=0` で無効化、`X88_ADPCM_IRQ=full` で BRDY/ZERO も含めて反映できます。OPNA Timer A/B を演奏クロックとして使っている間は、ADPCMフラグはSTATUS1で読めますが追加のCPU音源割り込みにはしません。
+- ADPCM / リズム音源の最終ミックスは `X88_ADPCM_MIX_SCALE` (既定値 1.4), `X88_RHYTHM_MIX_SCALE` (既定値 1.4), `X88_ADPCM_DECLICK_SAMPLES` で調整できます。
+- OPNA LFO の PMS 深度は `X88_FM_LFO_PM_SCALE` (既定値 0.7) で調整できます。`1.0` で YM2608 manual の cent 表をそのまま片振幅として扱う挙動に戻せます。
+- 音源調査用の環境変数と `opn_log_render` については `docs/SoundHardware.md` にまとめています。
+- YM2203/YM2608 の実装はPDSライセンスを維持するためデータシートなど公式に得られる情報で作成しています。このための音の再現性は低いです。
+- YM2608 リズム音源を使う場合は、ROM と同じ場所に `2608_BD.WAV`, `2608_SD.WAV`, `2608_TOP.WAV`, `2608_HH.WAV`, `2608_TOM.WAV`, `2608_RIM.WAV` を置いてください。
 - オリジナルの Linux 版 / Windows 版と完全に同一の挙動を保証するものではありません。
 
 ## クレジット
