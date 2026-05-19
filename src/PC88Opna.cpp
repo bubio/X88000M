@@ -1284,7 +1284,7 @@ void CPC88Opna::Generate(int nFrames) {
 	}
 }
 
-// optional YM2203 register event logger
+// optional OPN/OPNA register event logger
 
 void CPC88Opna::LogRegisterEvent(char chEvent, int nAddress, int nData) {
 	static int s_checked = 0;
@@ -1296,7 +1296,7 @@ void CPC88Opna::LogRegisterEvent(char chEvent, int nAddress, int nData) {
 			s_file = fopen(pszPath, "wb");
 			if (s_file != NULL) {
 				fprintf(s_file,
-					"# X88000M YM2203 register log\n"
+					"# X88000M OPN/OPNA register log\n"
 					"# columns: frame,event,address,data\n");
 			}
 		}

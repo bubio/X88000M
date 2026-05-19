@@ -184,7 +184,7 @@ protected:
 	// Sample output callback (set by the frontend; may be NULL).
 	static SampleOutputCallback m_pSampleOutputCallback;
 	// Total generated output frames since Reset(). Used by the optional
-	// YM2203 register logger so replay tools can align writes to audio
+	// OPN/OPNA register logger so replay tools can align writes to audio
 	// sample positions without depending on CPU timing details.
 	static long long m_nRenderedFrames;
 
@@ -204,7 +204,7 @@ protected:
 	// ----- SSG (PSG) synthesis state (Phase C-SSG) -----
 	// SSG internal counters advance at base_clock / prescaler_psg / 4,
 	// which is about 250 kHz for the typical PC-8801 configuration.
-	// (See docs/YM2203.md for the rationale — the literal "fc/16" in
+	// (See docs/SoundHardware.md for the rationale — the literal "fc/16" in
 	// the YM2149 datasheet refers to the full waveform period
 	// multiplier, not the per-tick divider.) The fractional
 	// accumulator tracks how many internal SSG ticks should fire per

@@ -1,4 +1,6 @@
-# Yamaha YM2203 Technical Reference
+# Sound Hardware Technical Notes
+
+この文書は X88000M のサウンド実装メモです。YM2203 (OPN) から始まった文書ですが、現在は YM2608 (OPNA / Sound Board II)、ADPCM、リズム音源、音質比較用の実験環境変数も含みます。
 
 ## 概要
 
@@ -577,13 +579,72 @@ Yamaha が公開した YM2203 / YM2608 アプリケーションマニュアル�
 
 ここまでの実装で踏んだ罠と修正:
 
+## 実験用環境変数と補助実行ファイル
+
+ここにある環境変数と補助実行ファイルは、通常利用向けの設定ではなく、YM2203/YM2608 実装の比較・切り分け・A/B 調整用です。音の再現性は現状値を標準とし、下記は問題調査時だけ使います。
+
+### ログ取得系
+
+- `X88_OPN_LOG=/path/to/opn.csv`: `PC88Opna` へのレジスタ書き込みを sample frame 単位でCSVへ出力する。`opn_log_render` でWAVに再レンダリングするための入力。
+- `X88_SOUND_IO_LOG=/path/to/soundio.csv`: Z80の音源I/OポートアクセスをCSVへ出力する。OPNA/Sound Board II 検出、ADPCM STATUS1、割り込みタイミングなど、CPUから見える挙動の調査用。
+- `X88_FM_DEBUG=1`: FMチャンネルの内部状態をstderrへ出す詳細診断。出力量が多いため、短時間の切り分け専用。
+
+### ADPCM / OPNA IRQ
+
+- `X88_ADPCM_IRQ`: ADPCM由来のCPU音源割り込み配送を切り替える。
+  - 未指定 / `1` / `eos`: 既定値。再生完了由来のEOSのみを配送する。
+  - `0`: ADPCM IRQをCPU音源割り込みへ配送しない。
+  - `full`: EOSに加えてBRDY/ZEROも配送する。検証用扱いで、通常タイトルでは割り込み過多になる可能性がある。
+
+OPNA Timer A/B が演奏クロックとして動いている間は、ADPCMフラグはSTATUS1で読めますが、追加のCPU音源割り込みとしては配送しません。
+
+### ミックス / 音質調整
+
+- `X88_FM_MIX_SCALE`: FMセクションの最終ミックス倍率。既定値は 1.6
+- `X88_SSG_MIX_SCALE`: SSGセクションの最終ミックス倍率。既定値は 1.0
+- `X88_ADPCM_MIX_SCALE`: ADPCMセクションの最終ミックス倍率。既定値は 1.4
+- `X88_RHYTHM_MIX_SCALE`: リズム音源セクションの最終ミックス倍率。既定値は 1.4
+- `X88_MASTER_VOLUME_MAX_GAIN`: SDL3 frontend の master volume 100 に対応する最終出力gain。既定値は 2.0
+- `X88_ADPCM_DECLICK_SAMPLES`: ADPCM停止時の簡易de-clickサンプル数。既定値は 32
+
+### FM実験ノブ
+
+FM音色追い込み用の環境変数です。現状値を標準として扱い、通常は変更しません。
+
+- `X88_FM_ENV_RATE_SCALE`
+- `X88_FM_ENV_RATE_BANDS`
+- `X88_FM_DECAY_RATE_SCALE`
+- `X88_FM_SUSTAIN_RATE_SCALE`
+- `X88_FM_RELEASE_RATE_SCALE`
+- `X88_FM_PERC_DECAY_RATE_SCALE`
+- `X88_FM_MOD_SCALE`
+- `X88_FM_MOD_SCALE_ALGO0`〜`X88_FM_MOD_SCALE_ALGO7`
+- `X88_FM_FB_SCALE`
+- `X88_FM_PHASE_RESET_ON_KEY`
+- `X88_FM_RETRIGGER_ON_KEY_WRITE`
+- `X88_FM_DT_SCALE`
+- `X88_FM_DT_APPLY_MUL`
+- `X88_FM_DT_MUL_WEIGHT`
+- `X88_FM_LFO_PM_SCALE`
+
+### 補助実行ファイル
+
+`opn_log_render` は `X88_OPN_LOG` のCSVを `PC88Opna` 単体へ流し込み、stereo 16-bit PCM WAVを生成する比較用ツールです。
+
+```sh
+cmake --build build --target opn_log_render
+./build/opn_log_render /tmp/opn.csv /tmp/opn.wav --fm-only --fm-ch 1 --tail-sec 3
+```
+
+主な用途は、X88000M実行時に採取したレジスタログを同じ音源実装で再生し直し、他エミュ録音や実機録音と比較することです。現状の `opn_log_render` は OPN / native OPNA の lower/upper port ログ再生用で、Sound Board II の A8h/A9h/ACh/ADh 固有ログの完全再生は対象外です。
+
 ## 比較用レジスタログと WAV 再レンダリング
 
-他エミュや実機録音に近づけるためのブラックボックス比較用に、YM2203 のレジスタ書き込みを sample frame 単位で CSV 化し、`PC88Opna` 単体で同じログを WAV に再レンダリングできるようにしている。
+他エミュや実機録音に近づけるためのブラックボックス比較用に、OPN/OPNA のレジスタ書き込みを sample frame 単位で CSV 化し、`PC88Opna` 単体で同じログを WAV に再レンダリングできるようにしている。
 
 ### ログ取得
 
-`X88_OPN_LOG` に出力先 CSV を指定して X88000M を起動すると、YM2203 への書き込みが次の形式で記録される:
+`X88_OPN_LOG` に出力先 CSV を指定して X88000M を起動すると、音源レジスタへの書き込みが次の形式で記録される:
 
 ```sh
 X88_OPN_LOG=/tmp/opn.csv ./build/X88000M.app/Contents/MacOS/X88000M
@@ -600,6 +661,7 @@ frame,event,address,data
 
 - `frame`: その書き込みが発生した時点の出力 sample frame
 - `event=D`: 通常の data write。再生時は `WriteAddress(address)` → `WriteData(data)` として扱う
+- `event=E`: OPNA upper port の data write。再生時は `WriteAddressUpper(address)` → `WriteDataUpper(data)` として扱う
 - `event=A`: address write だけで副作用を持つ `$2D-$2F` prescaler 書き込み。再生時は `WriteAddress(address)` のみ
 
 ### WAV 再レンダリング

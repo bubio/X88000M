@@ -1,5 +1,5 @@
 ////////////////////////////////////////////////////////////
-// YM2203 register log renderer
+// OPN/OPNA register log renderer
 //
 // Replays CSV logs produced by X88_OPN_LOG and writes a stereo WAV.
 

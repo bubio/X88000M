@@ -215,6 +215,7 @@ cmake --build build --target X88000M --parallel
 - YM2608 の ADPCM IRQ は既定で `X88_ADPCM_IRQ=1` 相当、つまり再生完了由来の EOS のみを音源割り込みへ反映します。`X88_ADPCM_IRQ=0` で無効化、`X88_ADPCM_IRQ=full` で BRDY/ZERO も含めて反映できます。OPNA Timer A/B を演奏クロックとして使っている間は、ADPCMフラグはSTATUS1で読めますが追加のCPU音源割り込みにはしません。
 - ADPCM / リズム音源の最終ミックスは `X88_ADPCM_MIX_SCALE` (既定値 1.4), `X88_RHYTHM_MIX_SCALE` (既定値 1.4), `X88_ADPCM_DECLICK_SAMPLES` で調整できます。
 - OPNA LFO の PMS 深度は `X88_FM_LFO_PM_SCALE` (既定値 0.7) で調整できます。`1.0` で YM2608 manual の cent 表をそのまま片振幅として扱う挙動に戻せます。
+- 音源調査用の環境変数と `opn_log_render` については `docs/SoundHardware.md` にまとめています。
 - YM2203/YM2608 の実装はPDSライセンスを維持するためデータシートなど公式に得られる情報で作成しています。このための音の再現性は低いです。
 - YM2608 リズム音源を使う場合は、ROM と同じ場所に `2608_BD.WAV`, `2608_SD.WAV`, `2608_TOP.WAV`, `2608_HH.WAV`, `2608_TOM.WAV`, `2608_RIM.WAV` を置いてください。
 - オリジナルの Linux 版 / Windows 版と完全に同一の挙動を保証するものではありません。
