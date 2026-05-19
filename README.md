@@ -85,12 +85,12 @@ X88000のLinux版からGTK 2.0依存を排除し、SDL3 + Dear ImGuiで構築し
 
 Ubuntu/Debian 系（`.deb`）:
 ```bash
-sudo apt install ./X88000M-1.0.5-Linux.deb
+sudo apt install ./X88000M-1.0.6-Linux.deb
 ```
 
 Fedora/RHEL 系（`.rpm`）:
 ```bash
-sudo dnf install ./X88000M-1.0.5-Linux.rpm
+sudo dnf install ./X88000M-1.0.6-Linux.rpm
 ```
 
 > **macOS での注意**: このアプリはAppleによるノータリゼーション（公証）を受けていないため、初回起動時にGatekeeperによってブロックされる場合があります。以下のいずれかの方法で回避できます：
