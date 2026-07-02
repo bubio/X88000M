@@ -13,10 +13,20 @@ X88000M は、Manuke 氏による PC-8801 エミュレータ `X88000` をベー�
   <a href="https://github.com/bubio/X88000M/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/bubio/X88000M" alt="License">
   </a>
+  <a href="https://github.com/bubio/X88000M/actions/workflows/linux.yml">
+    <img src="https://github.com/bubio/X88000M/actions/workflows/linux.yml/badge.svg" alt="Linux">
+  </a>
+  <a href="https://github.com/bubio/X88000M/actions/workflows/macos.yml">
+    <img src="https://github.com/bubio/X88000M/actions/workflows/macos.yml/badge.svg" alt="macOS">
+  </a>
+  <a href="https://github.com/bubio/X88000M/actions/workflows/windows.yml">
+    <img src="https://github.com/bubio/X88000M/actions/workflows/windows.yml/badge.svg" alt="Windows">
+  </a>
   <a href="https://github.com/bubio/X88000M/releases/latest">
     <img src="https://img.shields.io/github/downloads/bubio/X88000M/total.svg" alt="Downloads">
   </a>
 </p>
+
 
 X88000のLinux版からGTK 2.0依存を排除し、SDL3 + Dear ImGuiで構築しています。
 
@@ -240,3 +250,9 @@ cmake --build build --target X88000M --parallel
 - SDL3: https://github.com/libsdl-org/SDL/blob/main/LICENSE.txt
 - Dear ImGui: https://github.com/ocornut/imgui/blob/master/LICENSE.txt
 - Noto Sans JP: [fonts/LICENSE-NotoSansJP.txt](./fonts/LICENSE-NotoSansJP.txt)
+
+Noto Sans JP のライセンス文書は、フォント同梱先と同じディレクトリに同梱されます。
+
+- macOS: `X88000M.app/Contents/Resources/fonts/LICENSE-NotoSansJP.txt`
+- Windows: `fonts/LICENSE-NotoSansJP.txt`（配布 zip 内）
+- Linux: `${CMAKE_INSTALL_DATADIR}/X88000M/fonts/LICENSE-NotoSansJP.txt`

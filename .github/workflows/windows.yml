@@ -61,6 +61,7 @@ jobs:
           mkdir package
           copy build\X88000M.exe package\
           xcopy /E /I build\fonts package\fonts
+          copy /Y fonts\LICENSE-NotoSansJP.txt package\fonts\
           powershell Compress-Archive -Path package\* -DestinationPath build\X88000M-${{ matrix.artifact_suffix }}.zip
 
       - name: Upload artifact
