@@ -91,16 +91,27 @@ X88000のLinux版からGTK 2.0依存を排除し、SDL3 + Dear ImGuiで構築し
 
 [Releases](https://github.com/bubio/X88000M/releases)ページから各 OS 用のパッケージをダウンロードしてください。
 
+### CI 生成物一覧
+
+| OS | CI Artifact 名 | Release Asset 名 |
+|---|---|---|
+| Linux | `X88000M-{version}-linux-{architecture}.deb` / `X88000M-{version}-linux-{architecture}.rpm` | `X88000M-{version}-linux-{architecture}.deb` / `X88000M-{version}-linux-{architecture}.rpm` |
+| macOS (universal) | `X88000M-{version}-macos-universal2.zip` | `X88000M-{version}-macos-universal2.zip` |
+| Windows x64 | `X88000M-{version}-windows-x64.zip` | `X88000M-{version}-windows-x64.zip` |
+| Windows arm64 | `X88000M-{version}-windows-arm64.zip` | `X88000M-{version}-windows-arm64.zip` |
+
+`architecture` は各プラットフォーム慣習の値です（例: Debian は `amd64`/`arm64`、RPM は `x86_64`/`aarch64`）。
+
 ### Linux でのインストール
 
 Ubuntu/Debian 系（`.deb`）:
 ```bash
-sudo apt install ./X88000M-1.0.6-Linux.deb
+sudo apt install ./X88000M-<version>-linux-amd64.deb
 ```
 
 Fedora/RHEL 系（`.rpm`）:
 ```bash
-sudo dnf install ./X88000M-1.0.6-Linux.rpm
+sudo dnf install ./X88000M-<version>-linux-x86_64.rpm
 ```
 
 > **macOS での注意**: このアプリはAppleによるノータリゼーション（公証）を受けていないため、初回起動時にGatekeeperによってブロックされる場合があります。以下のいずれかの方法で回避できます：
@@ -194,6 +205,7 @@ cmake --build build --target X88000M --parallel
 
 ```cmd
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+```
 ```cmd
 cmake --build build --config Release --target X88000M --parallel
 ```

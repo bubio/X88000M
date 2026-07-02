@@ -20,10 +20,8 @@ jobs:
         include:
           - arch: x64
             msvc_arch: amd64
-            artifact_suffix: win-x64
           - arch: arm64
             msvc_arch: amd64_arm64
-            artifact_suffix: win-arm64
 
     runs-on: windows-2025
     permissions:
@@ -44,6 +42,15 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.arch }}-ccache
           variant: sccache
 
+      - name: Detect package version
+        id: package_meta
+        shell: pwsh
+        run: |
+          $match = Select-String -Path CMakeLists.txt -Pattern 'set\(CPACK_PACKAGE_VERSION "([^"]+)"\)'
+          if (-not $match) { throw "CPACK_PACKAGE_VERSION not found in CMakeLists.txt" }
+          $version = $match.Matches[0].Groups[1].Value
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: Configure
         run: >
           cmake -S . -B build
@@ -57,22 +64,22 @@ jobs:
         run: cmake --build build --target X88000M --parallel
 
       - name: Package
+        shell: cmd
         run: |
           mkdir package
-          copy build\X88000M.exe package\
-          xcopy /E /I build\fonts package\fonts
-          copy /Y fonts\LICENSE-NotoSansJP.txt package\fonts\
-          powershell Compress-Archive -Path package\* -DestinationPath build\X88000M-${{ matrix.artifact_suffix }}.zip
+          copy /Y build\X88000M.exe package\
+          xcopy /E /I /Y build\fonts package\fonts
+          powershell -NoProfile -Command "Compress-Archive -Path 'package\*' -DestinationPath 'build\X88000M-${{ steps.package_meta.outputs.version }}-windows-${{ matrix.arch }}.zip'"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: X88000M-${{ matrix.artifact_suffix }}
-          path: package/
+          name: X88000M-${{ steps.package_meta.outputs.version }}-windows-${{ matrix.arch }}.zip
+          path: build/X88000M-${{ steps.package_meta.outputs.version }}-windows-${{ matrix.arch }}.zip
           if-no-files-found: error
 
       - name: Upload release asset
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v3
         with:
-          files: build/X88000M-${{ matrix.artifact_suffix }}.zip
+          files: build/X88000M-${{ steps.package_meta.outputs.version }}-windows-${{ matrix.arch }}.zip

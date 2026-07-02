@@ -76,13 +76,24 @@ jobs:
           cpack -G DEB
           cpack -G RPM
 
-      - name: Upload artifact
+      - name: Detect package filenames
+        id: package_names
+        run: |
+          echo "deb_file=$(basename "$(ls build/*.deb | head -n1)")" >> "$GITHUB_OUTPUT"
+          echo "rpm_file=$(basename "$(ls build/*.rpm | head -n1)")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload DEB artifact
         uses: actions/upload-artifact@v7
         with:
-          name: X88000M-linux-packages
-          path: |
-            build/*.deb
-            build/*.rpm
+          name: ${{ steps.package_names.outputs.deb_file }}
+          path: build/${{ steps.package_names.outputs.deb_file }}
+          if-no-files-found: error
+
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package_names.outputs.rpm_file }}
+          path: build/${{ steps.package_names.outputs.rpm_file }}
           if-no-files-found: error
 
       - name: Upload release asset
