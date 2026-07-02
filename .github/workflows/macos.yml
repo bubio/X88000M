@@ -38,7 +38,12 @@ jobs:
       - name: Detect package version
         id: package_meta
         run: |
-          echo "version=$(sed -n 's/^set(CPACK_PACKAGE_VERSION \"\\(.*\\)\")/\\1/p' CMakeLists.txt | head -n1)" >> "$GITHUB_OUTPUT"
+          version=$(awk -F'"' '/^set\(CPACK_PACKAGE_VERSION "/ { print $2; exit }' CMakeLists.txt)
+          if [ -z "$version" ]; then
+            echo "Failed to detect CPACK_PACKAGE_VERSION from CMakeLists.txt" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Configure
         run: |
@@ -60,17 +65,17 @@ jobs:
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
             build/X88000M.app \
-            build/X88000M-${{ steps.package_meta.outputs.version }}-macos-universal2.zip
+            build/X88000M-${{ steps.package_meta.outputs.version }}-macos-universal.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: X88000M-${{ steps.package_meta.outputs.version }}-macos-universal2.zip
-          path: build/X88000M-${{ steps.package_meta.outputs.version }}-macos-universal2.zip
+          name: X88000M-${{ steps.package_meta.outputs.version }}-macos-universal.zip
+          path: build/X88000M-${{ steps.package_meta.outputs.version }}-macos-universal.zip
           if-no-files-found: error
 
       - name: Upload release asset
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v3
         with:
-          files: build/X88000M-${{ steps.package_meta.outputs.version }}-macos-universal2.zip
+          files: build/X88000M-${{ steps.package_meta.outputs.version }}-macos-universal.zip

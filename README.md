@@ -96,7 +96,7 @@ X88000のLinux版からGTK 2.0依存を排除し、SDL3 + Dear ImGuiで構築し
 | OS | CI Artifact 名 | Release Asset 名 |
 |---|---|---|
 | Linux | `X88000M-{version}-linux-{architecture}.deb` / `X88000M-{version}-linux-{architecture}.rpm` | `X88000M-{version}-linux-{architecture}.deb` / `X88000M-{version}-linux-{architecture}.rpm` |
-| macOS (universal) | `X88000M-{version}-macos-universal2.zip` | `X88000M-{version}-macos-universal2.zip` |
+| macOS (universal) | `X88000M-{version}-macos-universal.zip` | `X88000M-{version}-macos-universal.zip` |
 | Windows x64 | `X88000M-{version}-windows-x64.zip` | `X88000M-{version}-windows-x64.zip` |
 | Windows arm64 | `X88000M-{version}-windows-arm64.zip` | `X88000M-{version}-windows-arm64.zip` |
 
