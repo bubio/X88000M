@@ -100,6 +100,8 @@ struct SDiskFileRecord {
 std::vector<SDiskFileRecord> g_vDiskFileRecords;
 
 const char kMainWindowTitle[] = "X88000M";
+bool g_bN80V1RomReady = false;
+bool g_bN80V2RomReady = false;
 
 void UpdateWindowTitle(SDL_Window* pWindow, bool bCoreReady, bool bPauseEmulation);
 void DisableRendererVSync(SDL_Renderer* pRenderer, const char* pszRendererName);
@@ -3174,6 +3176,18 @@ bool ProbeRomAvailability()
 	return false;
 }
 
+bool ProbeRomSize(const char* pszName, long nRequiredSize)
+{
+	FILE* fpt = OpenSystemFileFromDirs(pszName);
+	if (fpt == NULL) {
+		return false;
+	}
+	bool bReady = (fseek(fpt, 0, SEEK_END) == 0) &&
+		(ftell(fpt) >= nRequiredSize);
+	fclose(fpt);
+	return bReady;
+}
+
 bool InitializeCore()
 {
 	const char* pszRomDir = getenv("X88_ROM_DIR");
@@ -3213,6 +3227,8 @@ bool InitializeCore()
 		return false;
 	}
 	CPC88::Initialize();
+	g_bN80V1RomReady = ProbeRomSize("n80_2.rom", 0x8000);
+	g_bN80V2RomReady = ProbeRomSize("n80_3.rom", 0xA000);
 	CPC88::Reset();
 	// Interlace is applied later via ApplyEnvSettingsFromIni; default off.
 	g_bScreenDrawerReady = g_screenDrawer.Create(g_pc88, false);
@@ -3966,6 +3982,25 @@ int main(int argc, char** argv) {
 		ImGui_ImplSDLRenderer3_NewFrame();
 		ImGui_ImplSDL3_NewFrame();
 		ImGui::NewFrame();
+#ifdef X88000_SDL3_HAS_CORE
+		if (bCoreReady) {
+			int nMode = CPC88::GetBasicMode();
+			const char* pszMissingRom = NULL;
+			if (nMode == CPC88Z80Main::BASICMODE_N80V1 && !g_bN80V1RomReady) {
+				pszMissingRom = "N80-V1 requires n80_2.rom (32 KiB).";
+			} else if (nMode == CPC88Z80Main::BASICMODE_N80V2 && !g_bN80V2RomReady) {
+				pszMissingRom = "N80-V2 requires n80_3.rom (40 KiB).";
+			}
+			if (pszMissingRom != NULL) {
+				ImGui::SetNextWindowSize(ImVec2(460, 0), ImGuiCond_Always);
+				if (ImGui::Begin("BASIC ROM missing or incomplete", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+					ImGui::TextUnformatted(pszMissingRom);
+					ImGui::TextWrapped("n80.rom and pc88.rom provide N-BASIC, not N80-V1/V2. Place the required ROM in your ROM directory and restart X88000M, or select another BASIC mode from System.");
+				}
+				ImGui::End();
+			}
+		}
+#endif
 			if (ImGui::BeginMainMenuBar()) {
 				// ----- System menu -----
 				if (ImGui::BeginMenu("System")) {

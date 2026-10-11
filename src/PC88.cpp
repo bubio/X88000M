@@ -226,29 +226,24 @@ void CPC88::Initialize() {
 	FILE* fpt;
 	bool bExistNBasic = false;
 	if ((fpt = SysFileOpen("pc88.rom")) != NULL) {
-		bExistNBasic = true;
 		FileRead(Z80Main().GetN88BasicRomPtr(), 0x8000, fpt);
-		FileRead(Z80Main().GetNBasicRomPtr()+0x6000, 0x2000, fpt);
+		bool bNBasicTailReadFailed = FileRead(
+			Z80Main().GetNBasicRomPtr()+0x6000, 0x2000, fpt);
 		fseek(fpt, 0x2000, SEEK_CUR);
 		FileRead(Z80Main().GetIERomPtr(0), 0x2000, fpt);
 		FileRead(Z80Main().GetIERomPtr(1), 0x2000, fpt);
 		FileRead(Z80Main().GetIERomPtr(2), 0x2000, fpt);
 		FileRead(Z80Main().GetIERomPtr(3), 0x2000, fpt);
 		FileRead(Z80Sub().GetSubRomPtr(), 0x2000, fpt);
-		FileRead(Z80Main().GetNBasicRomPtr(), 0x6000, fpt);
+		bool bNBasicReadFailed = FileRead(
+			Z80Main().GetNBasicRomPtr(), 0x6000, fpt);
+		bExistNBasic = !bNBasicTailReadFailed && !bNBasicReadFailed;
 		fclose(fpt);
 	} else {
 		if (((fpt = SysFileOpen("n88.rom")) != NULL) ||
 			((fpt = SysFileOpen("8801-n88.rom")) != NULL))
 		{
 			FileRead(Z80Main().GetN88BasicRomPtr(), 0x8000, fpt);
-			fclose(fpt);
-		}
-		if (((fpt = SysFileOpen("n80.rom")) != NULL) ||
-			((fpt = SysFileOpen("8801-n80.rom")) != NULL))
-		{
-			bExistNBasic = true;
-			FileRead(Z80Main().GetNBasicRomPtr(), 0x8000, fpt);
 			fclose(fpt);
 		}
 		if (((fpt = SysFileOpen("n88_0.rom")) != NULL) ||
@@ -273,6 +268,14 @@ void CPC88::Initialize() {
 			FileRead(Z80Sub().GetSubRomPtr(), 0x2000, fpt);
 			fclose(fpt);
 		}
+	}
+	// Some combined images omit N-BASIC; use the separate ROM if needed.
+	if (!bExistNBasic &&
+		(((fpt = SysFileOpen("n80.rom")) != NULL) ||
+		 ((fpt = SysFileOpen("8801-n80.rom")) != NULL)))
+	{
+		bExistNBasic = !FileRead(Z80Main().GetNBasicRomPtr(), 0x8000, fpt);
+		fclose(fpt);
 	}
 	if (((fpt = SysFileOpen("n80_2.rom")) != NULL)) {
 		FileRead(Z80Main().GetN80BasicRomPtr(), 0x8000, fpt);
