@@ -39,7 +39,7 @@ X88000のLinux版からGTK 2.0依存を排除し、SDL3 + Dear ImGuiで構築し
 </p>
 
 - **SDL3 + Dear ImGui ベースの単一 frontend**
-  macOS / Windows で同じ操作感で利用できます。
+  macOS / Windows / Linuxで同じ操作感で利用できます。
 - **メディア操作が速い**
   `D88`、`T88`、`CMT` をメニュー、ドラッグ&ドロップ、起動引数から読み込めます。
 - **D88 の複数イメージ管理に対応**
