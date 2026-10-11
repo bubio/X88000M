@@ -240,7 +240,6 @@ cmake --build build --target X88000M --parallel
 ## クレジット
 
 - Original X88000 by Manuke
-- macOS / Windows / SDL3+ImGui port maintained by bubio
 - オリジナル配布物の説明文書は [src/X88000Src.txt](./src/X88000Src.txt) に収録しています。
 
 ## ライセンス
