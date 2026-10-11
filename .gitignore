@@ -15,3 +15,5 @@ Testing/
 docs/*.pdf
 docs/*.PDF
 imgui.ini
+.claude/
+.codex/environments/
