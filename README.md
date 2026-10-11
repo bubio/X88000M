@@ -1,5 +1,7 @@
 # X88000M
 
+日本語 | [English](./README.en.md)
+
 <p align="center">
   <img src="docs/AppIcon.png" alt="X88000M" width="128" height="128">
 </p>
@@ -138,22 +140,28 @@ sudo dnf install ./X88000M-<version>-linux-x86_64.rpm
 
 端末から起動する場合はカレントディレクトリからも探します。必要に応じて `X88_ROM_DIR` 環境変数でも ROM ディレクトリを指定できます。
 
-代表的に参照されるファイル名:
+### 必須 ROM
 
-- `pc88.rom`
-- `n88.rom`
-- `n80.rom`
-- `n88_0.rom`
-- `n88_1.rom`
-- `n88_2.rom`
-- `n88_3.rom`
-- `disk.rom`
-- `kanji1.rom`
-- `kanji2.rom`
-- `font80sr.rom`
-- `optfont.rom`
+通常の PC-8801 モードで使う ROM です。`pc88.rom` がある場合、BASIC・拡張・ディスク ROM の分割ファイルは不要です。
 
-`pc88.rom` がある場合はそこからまとめて読み込み、無い場合は分割された ROM 名を順に探します。
+| ファイル | 用途 |
+|---|---|
+| `pc88.rom` または `n88.rom` + `n88_0.rom`〜`n88_3.rom` + `disk.rom` | N88-BASIC・拡張 ROM・ディスク起動 |
+| `kanji1.rom` または `font.rom` | 文字表示用フォント |
+
+### オプション ROM
+
+使うモード・機能に応じて追加してください。
+
+| ファイル | 用途 |
+|---|---|
+| `n80.rom`（32 KiB） | N-BASIC（`pc88.rom` に N-BASIC 部分がない場合も必要） |
+| `n80_2.rom`（32 KiB） | N80-V1 |
+| `n80_3.rom`（40 KiB：BASIC 32 KiB + IE ROM 8 KiB） | N80-V2 |
+| `e8.rom`（8 KiB） | N80-V1 の拡張 ROM |
+| `kanji2.rom` | 第2水準漢字 |
+| `font80sr.rom` | PC-8001mkIISR の専用フォント |
+| `optfont.rom` | オプションフォント |
 
 ## 基本操作
 
@@ -176,10 +184,10 @@ sudo dnf install ./X88000M-<version>-linux-x86_64.rpm
 
 ### 必要なもの
 
-- CMake 3.16 以上
+- CMake 3.16 以上（Windows の Visual Studio 2026 ジェネレータを使う場合は 4.2 以上）
 - C++11 対応コンパイラ
   - macOS: Xcode (Apple Clang)
-  - Windows: Visual Studio 2022 (MSVC)
+  - Windows: Visual Studio 2026 (MSVC)。Visual Studio Installer で「C++ によるデスクトップ開発」と「Windows 用 C++ CMake ツール」をインストール
 
 SDL3 と Dear ImGui はデフォルトで自動取得されます (`X88000M_FETCH_SDL3=ON`, `X88000M_FETCH_IMGUI=ON`)。
 
@@ -194,21 +202,25 @@ cmake --build build --target X88000M -j
 
 ### Windows
 
-Developer Command Prompt for VS 2022 から:
+Visual Studio 2026 の x64 Native Tools Command Prompt から:
 
 ```cmd
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target X88000M --parallel
 ```
 
-`build\X88000M.exe` と `build\fonts\` が生成されます。Ninja がない場合は Visual Studio ジェネレータも使えます:
+`build\X88000M.exe` と `build\fonts\` が生成されます。
+
+[Visual Studio 2026 ジェネレータ](https://cmake.org/cmake/help/latest/generator/Visual%20Studio%2018%202026.html)を使う場合は、CMake 4.2 以上で次を実行してください。Ninja 用とは別のビルドディレクトリを使います:
 
 ```cmd
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake -S . -B build-vs2026 -G "Visual Studio 18 2026" -A x64
 ```
 ```cmd
-cmake --build build --config Release --target X88000M --parallel
+cmake --build build-vs2026 --config Release --target X88000M --parallel
 ```
+
+`build-vs2026\Release\X88000M.exe` と `build-vs2026\Release\fonts\` が生成されます。ARM64 向けは `-A x64` を `-A ARM64` に変更し、ARM64 用 MSVC ビルドツールをインストールしてください。
 
 ### Linux
 
